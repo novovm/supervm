@@ -157,7 +157,7 @@ fn serve_snapshot(
         None
     };
     let carrier = if public {
-        IrohConfigV1::new(&profile.relays, profile.nameserver)?.with_relay_only()?
+        profile.carrier_config()?.with_relay_only()?
     } else {
         IrohConfigV1::new(&[], Ipv4Addr::LOCALHOST.into())?
             .with_bind_address((Ipv4Addr::LOCALHOST, 0).into())?

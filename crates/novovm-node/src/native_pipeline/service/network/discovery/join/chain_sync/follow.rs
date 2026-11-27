@@ -108,7 +108,7 @@ impl Follower {
             }
             self.chain.checkpoint_validity(wall_ms()?)?;
             if owner.is_none() {
-                let carrier = IrohConfigV1::new(&self.profile.relays, self.profile.nameserver)?;
+                let carrier = self.profile.carrier_config()?;
                 owner = bind_carrier(carrier).await.ok();
             }
             if let Some(active) = &owner {

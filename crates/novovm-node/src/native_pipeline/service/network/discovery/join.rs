@@ -47,6 +47,8 @@ struct Profile {
     library: PathBuf,
     library_sha256: String,
     nameserver: IpAddr,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    secondary_nameserver: Option<IpAddr>,
     relays: Vec<String>,
     /// Independently operated entry points for the original signed locator service.
     seeds: [SeedPin; 2],
@@ -123,6 +125,14 @@ struct SeedPin {
 }
 
 impl Profile {
+    fn carrier_config(&self) -> Result<IrohConfigV1> {
+        let config = IrohConfigV1::new(&self.relays, self.nameserver)?;
+        match self.secondary_nameserver {
+            Some(address) => config.with_secondary_nameserver(address),
+            None => Ok(config),
+        }
+    }
+
     fn pins(&self) -> Pins {
         (self.chain_id, self.genesis, self.protocol)
     }
@@ -203,6 +213,7 @@ impl Profile {
                     == self.native_query_peers.len(),
             "invalid installed native query routes"
         );
+        self.carrier_config()?;
         Ok(())
     }
 
@@ -266,7 +277,7 @@ pub fn discover_installed_from_profile(
 ) -> Result<serde_json::Value> {
     let (profile, identity) = pinned_installed_profile(path, profile_sha256)?;
     let seeds = read_seeds(profile_base(path)?, &profile);
-    let carrier = IrohConfigV1::new(&profile.relays, profile.nameserver)?;
+    let carrier = profile.carrier_config()?;
     let report = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
@@ -424,7 +435,6 @@ fn installed_chain_profile(
     let (domain, anchor) = profile.verification_domain()?;
     validate_parent(&anchor)?;
     chain_sync::check_profile_checkpoint_deadline(&profile)?;
-    IrohConfigV1::new(&profile.relays, profile.nameserver)?;
     Ok((profile, domain, anchor))
 }
 

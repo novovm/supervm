@@ -45,7 +45,7 @@ impl ReadRoute {
                 !address.relays.is_empty(),
                 "public read service has no release-approved relay"
             );
-            Some(IrohConfigV1::new(&profile.relays, profile.nameserver)?.with_relay_only()?)
+            Some(profile.carrier_config()?.with_relay_only()?)
         };
         Ok(Self {
             address,

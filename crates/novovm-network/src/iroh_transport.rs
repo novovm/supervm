@@ -457,6 +457,7 @@ impl IrohControlV1 {
 pub struct IrohConfigV1 {
     relays: Vec<RelayUrl>,
     nameserver: IpAddr,
+    secondary_nameserver: Option<IpAddr>,
     bind_address: Option<SocketAddr>,
     relay_only: bool,
     service_identity: Option<iroh::SecretKey>,
@@ -508,6 +509,7 @@ impl IrohConfigV1 {
         Ok(Self {
             relays: parsed,
             nameserver,
+            secondary_nameserver: None,
             bind_address: None,
             relay_only: false,
             service_identity: None,
@@ -516,6 +518,21 @@ impl IrohConfigV1 {
             service_concurrency: None,
             connection_ceiling: None,
         })
+    }
+
+    /// A second explicitly configured resolver in the same query pool.
+    pub fn with_secondary_nameserver(mut self, address: IpAddr) -> Result<Self> {
+        let address = address.to_canonical();
+        ensure!(
+            !address.is_unspecified() && !address.is_multicast(),
+            "invalid secondary DNS server"
+        );
+        ensure!(
+            address != self.nameserver.to_canonical(),
+            "duplicate DNS server"
+        );
+        self.secondary_nameserver = Some(address);
+        Ok(self)
     }
 
     /// Same platform controller for node admission and transport connections.
@@ -695,6 +712,7 @@ pub struct IrohEndpointOwnerV1 {
     state: Arc<EndpointOwnerState>,
     relays: Vec<RelayUrl>,
     nameserver: IpAddr,
+    secondary_nameserver: Option<IpAddr>,
     bind_address: Option<SocketAddr>,
     relay_only: bool,
     service_identity: Option<EndpointId>,
@@ -768,6 +786,7 @@ impl IrohEndpointOwnerV1 {
                 .map(iroh::SecretKey::public),
             relays: config.relays,
             nameserver: config.nameserver,
+            secondary_nameserver: config.secondary_nameserver,
             bind_address: config.bind_address,
             relay_only: config.relay_only,
             connections: AdaptiveAdmissionV1::new(
@@ -806,6 +825,7 @@ impl IrohEndpointOwnerV1 {
     /// retaining an endpoint never expands the candidate's relay/DNS policy.
     pub fn matches_config(&self, config: &IrohConfigV1) -> bool {
         self.nameserver == config.nameserver
+            && self.secondary_nameserver == config.secondary_nameserver
             && self.bind_address == config.bind_address
             && self.relay_only == config.relay_only
             && self.multiplex_stream_budget == config.multiplex_stream_budget
@@ -1197,6 +1217,17 @@ where
     with_iroh_scope_inner(config, control, None, operation).await
 }
 
+fn pinned_dns_resolver(
+    primary: NameserverConfig,
+    secondary: Option<NameserverConfig>,
+) -> DnsResolver {
+    DnsResolver::builder()
+        .add_nameserver_config(primary)
+        .add_nameserver_configs(secondary)
+        .disable_fallback()
+        .build()
+}
+
 async fn bind_carrier_endpoint(
     config: &IrohConfigV1,
     control: &IrohControlV1,
@@ -1209,10 +1240,10 @@ async fn bind_carrier_endpoint(
         .clone()
         .try_acquire_owned()
         .context("carrier endpoint limit")?;
-    let resolver = DnsResolver::builder()
-        .add_nameserver_config(NameserverConfig::udp(config.nameserver))
-        .disable_fallback()
-        .build();
+    let resolver = pinned_dns_resolver(
+        NameserverConfig::udp(config.nameserver),
+        config.secondary_nameserver.map(NameserverConfig::udp),
+    );
     let mut report = NetReportConfig::default();
     report.captive_portal_check = false;
     let transport = QuicTransportConfig::builder()
@@ -2661,6 +2692,52 @@ mod tests {
             .with_bind_address("127.0.0.1:0".parse().unwrap())
             .unwrap()
     }
+
+    #[tokio::test]
+    async fn secondary_pinned_dns_answers_when_primary_silently_drops() -> Result<()> {
+        use tokio::net::UdpSocket;
+
+        let primary = UdpSocket::bind("127.0.0.1:0").await?;
+        let secondary = UdpSocket::bind("127.0.0.1:0").await?;
+        let nameserver =
+            |address: SocketAddr| NameserverConfig::udp(address.ip()).with_port(address.port());
+        let resolver = pinned_dns_resolver(
+            nameserver(primary.local_addr()?),
+            Some(nameserver(secondary.local_addr()?)),
+        );
+        let answer = std::net::Ipv4Addr::new(192, 0, 2, 20);
+        // A single A/IN question, followed by one 60-second A record.
+        let question = b"\x09bootstrap\x04test\x00\x00\x01\x00\x01";
+        let reply = async {
+            let mut packet = [0; 512];
+            let (len, client) = secondary.recv_from(&mut packet).await?;
+            let end = 12 + question.len();
+            ensure!(
+                len >= end && packet[12..end].eq_ignore_ascii_case(question),
+                "unexpected DNS question"
+            );
+            let mut response = packet[..2].to_vec();
+            response.extend_from_slice(&[0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+            response.extend_from_slice(&packet[12..end]);
+            response.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4]);
+            response.extend_from_slice(&answer.octets());
+            secondary.send_to(&response, client).await?;
+            Ok::<_, anyhow::Error>(())
+        };
+        let (resolved, served) = tokio::time::timeout(Duration::from_secs(4), async {
+            tokio::join!(
+                resolver.lookup_ipv4("bootstrap.test.", Duration::from_secs(3)),
+                reply
+            )
+        })
+        .await?;
+        served?;
+        assert_eq!(resolved?.collect::<Vec<_>>(), vec![answer]);
+        let mut unanswered = [0; 512];
+        assert!(primary.try_recv_from(&mut unanswered)?.0 >= 12 + question.len());
+        Ok(())
+    }
+
     fn control() -> IrohControlV1 {
         IrohControlV1::new(Instant::now() + Duration::from_secs(8), || Ok(())).unwrap()
     }
@@ -3351,6 +3428,13 @@ mod tests {
         let mut wrong = local_config();
         wrong.nameserver = "127.0.0.2".parse().unwrap();
         assert!(!owner.matches_config(&wrong));
+        let wrong = local_config()
+            .with_secondary_nameserver("127.0.0.2".parse().unwrap())
+            .unwrap();
+        assert!(!owner.matches_config(&wrong));
+        assert!(local_config()
+            .with_secondary_nameserver("::ffff:127.0.0.1".parse().unwrap())
+            .is_err());
         let mut wrong = local_config();
         wrong.bind_address = None;
         assert!(!owner.matches_config(&wrong));

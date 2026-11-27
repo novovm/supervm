@@ -220,7 +220,7 @@ impl ReceiptSearch {
         let prepared = height
             .map(|h| self.prepare(h, &cache_verifier))
             .transpose()?;
-        let carrier = IrohConfigV1::new(&profile.relays, profile.nameserver)?;
+        let carrier = profile.carrier_config()?;
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?

@@ -185,7 +185,7 @@ fn sync_installed(path: &Path, with_state: bool) -> Result<serde_json::Value> {
         .then(|| StateCache::open(chain.root.join("state-nodes")))
         .transpose()?;
     let reopened_height = chain.tip.height;
-    let carrier = IrohConfigV1::new(&profile.relays, profile.nameserver)?;
+    let carrier = profile.carrier_config()?;
     let progress = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?

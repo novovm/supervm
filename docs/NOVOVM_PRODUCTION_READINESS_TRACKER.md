@@ -159,6 +159,14 @@ C 在 Windows 回环验收链域用真实 AOEM 签发尚在有效期内的定位
 
 旧打包器在组装回归中会发布只有两份定位的制品。新打包器在任意一路缺少固定联系地址时拒绝发布，仍可组装两路固定联系地址加签名定位的包，或仅带固定联系地址的包。Windows 和 Linux 组装回归均通过。C 将实际 AOEM 和真实归档定位放在隔离暂存布局中，两种合格形态均通过打包输入检查和真实 Client 离线预检，缺少第二联系地址的配置被拒绝。未创建本机身份目录，验收摘要 SHA-256 为 `160c39a17ea6bd93d833e6246304b7186d6fdc28682ba8449e364b54a600c230`。
 
+### 安装配置中的第二个 DNS 解析器
+
+发行方可在 Windows 或 Linux Client 已固定摘要的 JSON 安装配置中设置 `secondary_nameserver`，填入与 `nameserver` 不同的 IPv4 或 IPv6 地址。两个地址进入同一个 Iroh DNS 查询池，首个解析器失联时可继续向另一个查询。只有明确写入该配置的解析器可接收这些 DNS 查询。省略字段时沿用原有单解析器配置。
+
+同一安装配置用于认证发现、首次及持续状态同步、只读证明服务和 Receipt 读取。DNS 仅用于地址解析。引导传输身份、签名定位和链证明继续分别验证。双入口现场验收仍须核对各站点实际使用的中继、DNS 和上游，并保留干净设备认证和验真同步证据。
+
+C 在 Ubuntu 24.04 隔离环境运行 `secondary_pinned_dns_answers_when_primary_silently_drops`。第一台环回 UDP 解析器收包后不应答，第二台解析器返回有效 A 记录，查询耗时约 0.10 秒。Iroh 端点配置匹配回归及 Linux 原生 Client 的 `cargo check` 通过。安装预检测试在编译阶段遇到本机 Rust 编译器崩溃，尚未执行到用例。Windows 候选包和公网双入口仍待实测。
+
 ### 生产双引导验收取证
 
 生产双源和单源退出的两次发现都用 `novovm-native-client <profile> discover <profile-sha256>`。摘要来自独立核对的发行清单。Client 在创建本机传输身份前核对实际读取的配置，并在成功回执中记录 `profile_sha256`。复核两份原始 stdout 时同时传 `--require-source-attribution --profile-sha256 <同一摘要>`，防止两次运行中途切换信任配置。旧版无摘要回执仍可按当时的证据范围复查。

@@ -67,6 +67,7 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
         library,
         library_sha256: digest,
         nameserver: loopback,
+        secondary_nameserver: None,
         relays: Vec::new(),
         seeds: [
             SeedPin {
@@ -302,7 +303,9 @@ async fn verify_active_refresh(profile: &Profile, root: &Path, source: &str) -> 
     let (identity, _) = ephemeral_transport_identity(&profile.library, &profile.library_sha256)?;
     let candidates = prepare_seed_candidates(profile, &identity, read_seeds(root, profile))?;
     let client = bind_carrier(
-        IrohConfigV1::new(&[], profile.nameserver)?.with_bind_address("127.0.0.1:0".parse()?)?,
+        profile
+            .carrier_config()?
+            .with_bind_address("127.0.0.1:0".parse()?)?,
     )
     .await?;
     let started = Instant::now();
@@ -385,6 +388,7 @@ fn release_preflight_verifies_signed_bootstrap_locators_offline() -> Result<()> 
         library,
         library_sha256: digest,
         nameserver: "127.0.0.1".parse()?,
+        secondary_nameserver: None,
         relays: Vec::new(),
         seeds: [
             SeedPin {
@@ -467,6 +471,19 @@ fn release_preflight_verifies_signed_bootstrap_locators_offline() -> Result<()> 
     let current = make_record(&first, pins, &primary, now + 120_000)?;
     write_locator("primary.json", &current)?;
     assert_eq!(check(&profile)?["chain_id"], chain_id);
+    let legacy_profile_hash = fingerprint(&fs::read(&path)?);
+    profile.secondary_nameserver = Some("127.0.0.2".parse()?);
+    assert_eq!(check(&profile)?["chain_id"], chain_id);
+    assert!(check_installed_profile(&path, &legacy_profile_hash)
+        .unwrap_err()
+        .to_string()
+        .contains("SHA-256"));
+    profile.secondary_nameserver = Some(profile.nameserver);
+    assert!(check(&profile)
+        .unwrap_err()
+        .to_string()
+        .contains("duplicate DNS server"));
+    profile.secondary_nameserver = None;
 
     chain_sync::check_locator_role_transition(
         &root, &profile, &first, &second, &validator, &current,
