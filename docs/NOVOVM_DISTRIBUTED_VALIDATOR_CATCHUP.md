@@ -34,8 +34,19 @@ D 的有线仍断开，当前 Wi-Fi 到 A、C 均选择同网段直连路由。D
 
 C 将已通过不等权单机行为验收的 `095f932c` Node、通过不等权计划回归的同提交 Harness、原三机 `novovmctl` 和 AOEM 整理为隔离测试包。另含当前 runner、verifier 及工件清单。包内落地文件通过候选摘要、Harness 入口、Node `existing` 合同和 AOEM 原生验签预检。ZIP 的七个成员逐项回读验证，共 78547880 字节，SHA-256 `1feccd23e3525f75e8ff732241051bc7868dece2308cb350ec21389f0c6f31d7`，清单 SHA-256 `e5c11ed146e76a0ce21b0967b44a570d86d0f02d925d02028f24bf02897f7282`。A、D 分别于 02:57:56 和 02:59:10 UTC 从 C 的限时局域网入口取回整包，并独立核对整包、清单及六项输入的大小与 SHA-256。双方均使用固定 TLS 公钥验证。C 在 D 取件完成后关闭了该入口。四个隔离角色随后在原测试账户各自新建用途钥，协调方逐份验明本轮公开文件及来源摘要。测试链 `7855568512` 的计划 SHA-256 为 `c596c5438e538888cfafd05abd2e743d8360dad2ebe674d43237c51c6a82eed0`，创世文件 SHA-256 为 `34443f15b25e3c5ee62a00d22db508831ce01dddfe83d332bd3d4e477b4560cd`。A、C、D 分别用固定测试包独立重建出相同创世。PlanOnly 复验了 A1/A2/C1/D1 权重 1/3/2/1、总权重 7、门槛 5，以及 A1+C1 权重 3、A2+C1 权重 5；报告 SHA-256 为 `965273bc95d73d3259d8744bcd40f72cd150e7f6240fba2698a94bc62945f4ac`。
 
-四份本机 Ready 回执与同一计划、创世、工件和本机受保护用途钥匹配，A1、A2、C1、D1 回执 SHA-256 依次为 `f83bce97e5ac82b3db487618ed487bea3d3c41a862293e127304a1a66affa565`、`a4bb7092e86bd6e28a6d5dc54e926f2c151b41e37ace76b8151cc26b501bd7ee`、`379615f5e470c9fc56e9adf265860324b1c0130f8b9409652e9d0eaca5750f37`、`44442aceda6a20ac2bd1e5818a91aaaa25bda6cd77defe09bdf393258a134526`。准备阶段核对到 A 的 WLAN 入站默认拦截，未发现覆盖本次测试进程和两个测试端口的放行。三机实际认证、出块、追赶和终结仍待验证。
+四份本机 Ready 回执与同一计划、创世、工件和本机受保护用途钥匹配，A1、A2、C1、D1 回执 SHA-256 依次为 `f83bce97e5ac82b3db487618ed487bea3d3c41a862293e127304a1a66affa565`、`a4bb7092e86bd6e28a6d5dc54e926f2c151b41e37ace76b8151cc26b501bd7ee`、`379615f5e470c9fc56e9adf265860324b1c0130f8b9409652e9d0eaca5750f37`、`44442aceda6a20ac2bd1e5818a91aaaa25bda6cd77defe09bdf393258a134526`。准备阶段核对到 A 的 WLAN 入站默认拦截。正式隔离测试窗口只为本轮 Node、两个专用 UDP 端口和 C、D 的私网来源启用限时入站规则，测试结束后核对两条规则及清理任务均已清除。
 
+
+## 2026-11-27 三机不等权验收
+
+A、C、D 三台物理机的四个隔离角色用上述固定计划与创世运行。C 经原生 NovoRUDP/APFL 分别认证查询 A1、A2、D1。隔离链首批在高度 1 终结，D1 归档原决策后离线。
+
+- A1、A2、C1 的在线权重合计 6，D1 停止期间推进 40 个高度。D1 用原测试库 Existing 回到高度 41。C 独立认证得出与 A1 一致的区块、状态根、回执承诺和两条 nonce 40 终结回执。D1 停机前后的高度 1 决策及 outbox 字节摘要一致，outbox SHA-256 为 `8f0254ebad3cf7a2d2118e79ee117ebcfc2ab33ede11e78110cce297e0652ed6`。
+- A1 与 C1 的在线权重为 3。A1 对 C1 仅提交一次 nonce 41。两端分别观察 14 秒和 13 秒，均保留高度 41 和相同链头，C1 的两条回执均保持 Received。
+- A1 停止后，A2 于 03:31:17 UTC 从原库恢复，A2 和 C1 的权重合计 5。03:32:22 UTC 的查询仍见高度 41 和两条 Received。03:33:29 UTC 的首次确认查询已见两条原回执成功终结于高度 42。该阶段只保留原输入。
+- A1、D1 随后从各自原库恢复，四端认证读取和离线归档均核对至高度 42、第 14 轮。区块为 `f058967fbd7e800fdb2ba54eb58b422a92212195450f4414002d48b5b0a62156`，状态根为 `0fd0ec0e7f8347c19b95ed23873c5887ea9e6166237c33ab27883964f97b53aa`。四份原库归档各自验得 A2、C1 两枚 Precommit QC 签票，加权 5/7，门槛 5。
+
+C 汇总了 74 份原始验证输入，用测试包内的固定 verifier 得到 PASS。证据 ZIP 为 108103 字节，SHA-256 `ea5ca6434a2fd0f5beef0412becc3a52bde913ab8a60c7eda383dd8a21c1b19b`，首次 verifier 输出 SHA-256 `225f7c6efc5f66dbe1d69df3d5e1675c8953636d2b2de98f8c78a567033fc702`。解压后逐文件复算，并用包内 verifier 再次得到相同结果。隔离测试进程已退出。原档、验收工具和取件路径走受限交接。
 ## 入口与交接材料
 
 入口为 scripts/novovm-distributed-validator-catchup.ps1，证据核对为 scripts/novovm-verify-distributed-validator-catchup.ps1。用同一 Windows x86_64 Node、AOEM、novovmctl 及本测试 harness。harness 来自以下构建输出的 novovm_node-* 测试可执行文件。按现有 Windows 原生构建说明加载 MSVC/SDK 和 RocksDB 缓存。记录源提交、工具链、功能和真实构建输出哈希。
