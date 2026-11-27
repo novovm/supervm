@@ -192,6 +192,12 @@ C 将包内 31 个 ELF 的系统依赖和符号版本与 B 的既有只读 ABI �
 
 C 两次调用标准打包器生成带配置的包，均在编译 `novovm-product-relay` 时遇到本机 rustc/LLVM 崩溃。上述首装使用本地隔离夹具，恢复来源为原归档。带正式发行配置的标准包、公网同步及物理换网仍待验收。
 
+### 用已核验的 Linux 基础包签发发现配置
+
+标准打包器新增 `-VerifiedBasePackageRoot` 和 `-VerifiedBaseManifestSha256`。基础包和新包使用 `artifacts/product-overlay` 下互相独立的目录。与 `-LinuxClientProfile` 和 `-LinuxClientProfileSha256` 一同传入时，工具核对基础清单、逐份复制并校验原有文件，然后用同一 Client 预检新配置和引导材料。新清单保留基础包的源码提交，并记载基础清单及配置的 SHA-256。
+
+02:19 至 02:20 UTC，C 使用 `51c71fb5` 的标准打包器从 `9e0d6588` 基础包生成含双 DNS 回环配置的隔离包，出包耗时约 2.3 秒，95 个原文件摘要逐一一致，未调用编译器。包内 Client 拒绝重复 DNS，错误配置没有发布。普通用户用正式安装器从高度 0 启动，恢复原签名归档到高度 42，复用同一设备身份，密钥权限 `0600`，测试服务已清理。出包报告 SHA-256 `3660f612e3856a38bbe03f0680057267a2cb31f806e45353309cc18649f5da4b`，首装和恢复报告 SHA-256 `c45ccc4df8d7287a49594ea2b3544680970e0504fbd6ff2af67431989d420d22`。
+
 ### 生产双引导验收取证
 
 生产双源和单源退出的两次发现都用 `novovm-native-client <profile> discover <profile-sha256>`。摘要来自独立核对的发行清单。Client 在创建本机传输身份前核对实际读取的配置，并在成功回执中记录 `profile_sha256`。复核两份原始 stdout 时同时传 `--require-source-attribution --profile-sha256 <同一摘要>`，防止两次运行中途切换信任配置。旧版无摘要回执仍可按当时的证据范围复查。
