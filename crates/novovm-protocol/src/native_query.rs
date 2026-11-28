@@ -273,6 +273,29 @@ pub struct ApplicationGrantViewV1 {
     pub expires_at_height: u64,
 }
 
+impl ApplicationGrantViewV1 {
+    /// Checks grant metadata for its already authenticated selector and root.
+    /// The caller must correlate the view with the exact selector, establish
+    /// root trust and freshness, and verify possession of the device key.
+    pub fn permits_device_at_observed_height(
+        &self,
+        selector: &crate::uca_application::ApplicationGrantSelectorV1,
+        expected_revision: u64,
+    ) -> bool {
+        selector.validate().is_ok()
+            && self.state_root != [0; 32]
+            && self.revision > 0
+            && self.revision == expected_revision
+            && !self.revoked
+            && self.identity_status == IdentityStatusV1::Active
+            && self.issuer_key_ref != [0; 32]
+            && self.issuer_key_ref == self.identity_key_ref
+            && self.issuer_key_ref != selector.device
+            && self.not_before_height <= self.height
+            && self.height < self.expires_at_height
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ApplicationGrantStateV1 {
     Pending,

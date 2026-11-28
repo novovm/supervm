@@ -29,6 +29,31 @@ fn signed() -> SignedApplicationGrantV1 {
 }
 
 #[test]
+fn observed_grant_rejects_superseded_sessions_and_revoked_devices() {
+    use crate::native_query::{ApplicationGrantViewV1, IdentityStatusV1};
+
+    let selector = intent().selector;
+    let mut view = ApplicationGrantViewV1 {
+        state_root: [7; 32],
+        height: 10,
+        revision: 8,
+        issuer_key_ref: [5; 32],
+        identity_key_ref: [5; 32],
+        identity_status: IdentityStatusV1::Active,
+        revoked: false,
+        not_before_height: 10,
+        expires_at_height: 20,
+    };
+    assert!(view.permits_device_at_observed_height(&selector, 8));
+    assert!(!view.permits_device_at_observed_height(&selector, 7));
+    view.revoked = true;
+    assert!(!view.permits_device_at_observed_height(&selector, 8));
+    view.revoked = false;
+    view.height = 20;
+    assert!(!view.permits_device_at_observed_height(&selector, 8));
+}
+
+#[test]
 fn canonical_application_authority_roundtrip_is_distinct_from_old_ed25519() {
     for action in [intent().action, ApplicationGrantActionV1::Revoke] {
         let mut signed = signed();
