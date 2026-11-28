@@ -343,6 +343,8 @@ Windows Node 摘要 `e4450d135c250147a2f6b7121bae039d86665bd506531d34eb37b686e0e
 
 C 用包内 `novovmctl` 对原身份、原库、`LocalService` 和认证健康配置生成 `existing` 启动预览，`applied=false`，前后均为 PID `5124`。预览 SHA-256 `14dce8ac66b94db2f510958b3b552938d2270ee87d4782feb3b59e7b46478082`。本轮 Linux 证据覆盖基础制品回读，Windows 证据另覆盖上述隔离运行与预览。现役 B/C 未执行升级，Windows 清单的混合版本滚动升级声明仍为 `false`。
 
+A 对 `98d497a8` Linux 正式归档逐件复核 B 宿主的静态 ABI。参照 B 于 00:29:30 UTC 保存的 Ubuntu 24.04.4 x86-64、glibc 2.39 快照，31 个 ELF（含 Node、Client 和随包 AOEM）的加载器、7 项动态库依赖、58 组库版本和 544 组版本化符号全部匹配，强弱符号缺项均为 0。快照 SHA-256 `88102d690bae4420e60a8033c06cd0beb8d48a6c29ca05f1827fe6bffa81d3e2`，核验报告 SHA-256 `2027b47029e1c906ac98f61ddf5e979538d792ec6d3a769d20c161b61747152e`。本轮使用 A 的既有制品及快照，B 实机启动和认证检查仍待联合窗口。
+
 ### 2026-11-28 12:10–12:13 UTC 原链现役进度
 
 | 节点 | 现场读回 | 证据边界 |
