@@ -136,6 +136,26 @@ esac
         self.assertIn("checksum differs", self.invoke(ok=False))
         self.assertFalse(self.log.exists())
 
+    def test_rejected_profile_does_not_publish_release_and_can_retry(self):
+        self.entries[CLIENT] += b'if test "${TEST_REJECT_PROFILE:-0}" = 1; then exit 62; fi\n'
+        self.pin = self.issue()
+        plan = self.invoke("--plan")
+        self.env["TEST_REJECT_PROFILE"] = "1"
+        self.assertIn("exit status 62", self.invoke(ok=False))
+        release = Path(plan["release"])
+        self.assertFalse(release.exists())
+        self.assertEqual([], list(release.parent.glob(".novovm-*")))
+        self.assertFalse(Path(plan["receipt_command"]).exists())
+        self.assertFalse((release.parent.parent / "client-credentials").exists())
+        self.assertFalse(self.unit.exists())
+        self.assertFalse((Path(self.env["XDG_STATE_HOME"]) / "NOVOVM").exists())
+        self.assertTrue(all(line.startswith("--user show ") for line in self.log.read_text().splitlines()))
+
+        del self.env["TEST_REJECT_PROFILE"]
+        self.assertEqual(str(release), self.invoke()["release"])
+        self.assertTrue((release / PROFILE).is_file())
+        self.assertTrue(self.unit.is_file())
+
     def test_receipt_command_uses_the_installed_profile_custody_and_state(self):
         self.env["XDG_DATA_HOME"] = str(self.base / "data's $literal %")
         self.env["XDG_STATE_HOME"] = str(self.base / "state with spaces")

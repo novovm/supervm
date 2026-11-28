@@ -227,6 +227,15 @@ def verify_installed(dest, files):
         )
 
 
+def preflight_release(directory, files):
+    verify_installed(directory, files)
+    subprocess.run(
+        [directory / CLIENT, directory / PROFILE, "check-installed-profile", files[PROFILE]],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+
+
 def install_release(root, dest, files):
     if not dest.exists():
         with tempfile.TemporaryDirectory(dir=dest.parent, prefix=".novovm-") as tmp:
@@ -236,15 +245,10 @@ def install_release(root, dest, files):
                 target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 shutil.copyfile(plain(root / name), target)
                 target.chmod(0o500 if name == CLIENT else 0o400)
-            verify_installed(stage, files)
+            preflight_release(stage, files)
             stage.rename(dest)
     else:
-        verify_installed(dest, files)
-    subprocess.run(
-        [dest / CLIENT, dest / PROFILE, "check-installed-profile", files[PROFILE]],
-        check=True,
-        stdout=subprocess.DEVNULL,
-    )
+        preflight_release(dest, files)
 
 
 def check_unit(unit, text, must_be_loaded=False, stopped_follower=None, timeout=None):
