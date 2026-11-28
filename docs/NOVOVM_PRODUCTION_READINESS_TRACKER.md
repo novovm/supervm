@@ -345,6 +345,8 @@ C 用包内 `novovmctl` 对原身份、原库、`LocalService` 和认证健康�
 
 A 对 `98d497a8` Linux 正式归档逐件复核 B 宿主的静态 ABI。参照 B 于 00:29:30 UTC 保存的 Ubuntu 24.04.4 x86-64、glibc 2.39 快照，31 个 ELF（含 Node、Client 和随包 AOEM）的加载器、7 项动态库依赖、58 组库版本和 544 组版本化符号全部匹配，强弱符号缺项均为 0。快照 SHA-256 `88102d690bae4420e60a8033c06cd0beb8d48a6c29ca05f1827fe6bffa81d3e2`，核验报告 SHA-256 `2027b47029e1c906ac98f61ddf5e979538d792ec6d3a769d20c161b61747152e`。本轮使用 A 的既有制品及快照，B 实机启动和认证检查仍待联合窗口。
 
+C 对照 D 现役节点同摘要的 `654b9991` 正式归档和候选 `98d497a8` Windows ZIP。Node、Client 和 `novovmctl` 的 PE 架构与最低系统版本字段一致，随包 15 个 AOEM DLL 摘要逐件一致。Node 唯一新增静态导入是 `kernel32.dll!SetFileAttributesW`。三项程序的新增导入合并去重后涉及 14 个系统 DLL 的 96 个导出，含 API-set 和三个序号导出。差异回执 SHA-256 `5ffbebb8ea25242d518e9a28a3a083e7fb4c9f689fa44cea39847c7728b6d730`。D 于 12:31:19 UTC 在 Windows `26200.9974` 的普通权限 x64 进程中逐项解析，96 个全部通过，缺项 0，现场回执 SHA-256 `238f9acd63f69bec076fd240e8eda05f9f2c7dc7aa03f8ae78d32016926dc0bd`。D 的候选包签收、现役 `existing` 启动与共识追赶仍待现场证据。
+
 ### 2026-11-28 12:10–12:13 UTC 原链现役进度
 
 | 节点 | 现场读回 | 证据边界 |
