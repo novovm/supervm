@@ -1,5 +1,7 @@
 # D real network roaming acceptance
 
+The product passes a roaming trial when the same installed Client and device identity resume authenticated state reads after a recorded access-link loss. A reachable authorized direct or relay path can provide recovery, including through the operating system's existing tunnel. Record the Client lifetime, the link transition, the signed locator and the verified state. The packet-component procedure below is for diagnosing or certifying a particular physical egress. Routine use requires no packet capture or manual routing changes.
+
 This is separate from the C/D same-LAN proxy interruption. Do not reuse its events to claim a change of physical access network.
 
 ## D preflight, 2026-11-26
