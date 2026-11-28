@@ -52,6 +52,7 @@ show)
     printf 'LoadState=loaded\\nFragmentPath=%s\\nDropInPaths=\\nActiveState=inactive\\n' "$FOREIGN_FRAGMENT"
   elif test -f "$TEST_UNIT"; then
     active="${TEST_ACTIVE:-active}"
+    if test -n "${TEST_STOPPED:-}" && test -f "$TEST_STOPPED"; then active=inactive; fi
     reload="${TEST_NEEDS_RELOAD:-no}"
     if test -n "${TEST_STALE:-}" && test -f "$TEST_STALE"; then reload=yes; fi
     if test -n "${TEST_MARKER:-}" && test -f "$TEST_MARKER"; then active="${TEST_ACK:-inactive}"; fi
@@ -62,7 +63,10 @@ show)
 daemon-reload)
   if test -n "${TEST_RELOAD_FAIL:-}"; then : >"$TEST_STALE"; exit 61; fi
   if test -n "${TEST_STALE:-}"; then rm -f "$TEST_STALE"; fi ;;
-enable) test "$3" = "--now"; test "$4" = "novovm-native-client.service" ;;
+stop) test "$3" = "novovm-native-client.service"; : >"$TEST_STOPPED" ;;
+enable)
+  test "$3" = "--now"; test "$4" = "novovm-native-client.service"
+  if test -n "${TEST_STOPPED:-}"; then rm -f "$TEST_STOPPED"; fi ;;
 *) exit 24 ;;
 esac
 """
@@ -155,6 +159,53 @@ esac
         self.assertEqual(str(release), self.invoke()["release"])
         self.assertTrue((release / PROFILE).is_file())
         self.assertTrue(self.unit.is_file())
+
+    def test_renew_pinned_checkpoint_without_replacing_identity(self):
+        profile = json.loads(self.entries[PROFILE])
+        checkpoint = {"height": 2, "block_hash": [42] * 32, "valid_until_unix_ms": 5}
+        profile["verification"]["minimum_finalized_checkpoint"] = checkpoint
+        self.entries[PROFILE] = json.dumps(profile).encode()
+        self.entries[CLIENT] += b'if test "${TEST_REJECT_PROFILE:-0}" = 1; then exit 62; fi\n'
+        self.pin = self.issue()
+        old = self.invoke()
+        # A release predating ExecCondition is still the expected owner.
+        old_unit = "\n".join(line for line in self.unit.read_text().split("\n")
+                             if not line.startswith("ExecCondition="))
+        self.unit.write_text(old_unit)
+        key = Path(old["release"]).parents[1] / "client-credentials/owner-key"
+        key_before = (key.stat().st_ino, key.read_bytes())
+        state = Path(old["state_home"])
+        state.mkdir(parents=True)
+        cache = state / "cached-proof"
+        cache.write_bytes(b"certified snapshot")
+        self.env["TEST_STOPPED"] = str(self.base / "stopped")
+        args = ("--renew-profile-from-manifest-sha256", self.pin)
+
+        checkpoint.update(block_hash=[43] * 32, valid_until_unix_ms=10)
+        self.entries[PROFILE] = json.dumps(profile).encode()
+        wrong = self.issue()
+        self.assertIn("same pinned checkpoint", self.invoke(*args, pin=wrong, ok=False))
+
+        checkpoint["block_hash"] = [42] * 32
+        self.entries[PROFILE] = json.dumps(profile).encode()
+        renewed = self.issue()
+        self.env["TEST_REJECT_PROFILE"] = "1"
+        self.assertIn("exit status 62", self.invoke(*args, pin=renewed, ok=False))
+        self.assertEqual(old_unit, self.unit.read_text())
+        self.assertNotIn("--user stop ", self.log.read_text())
+
+        del self.env["TEST_REJECT_PROFILE"]
+        self.env["TEST_STALE"] = str(self.base / "stale")
+        self.env["TEST_RELOAD_FAIL"] = "1"
+        self.assertIn("exit status 61", self.invoke(*args, pin=renewed, ok=False))
+        del self.env["TEST_RELOAD_FAIL"]
+        result = self.invoke(*args, pin=renewed)
+        self.assertEqual(renewed, result["manifest_sha256"])
+        self.assertIn(str(Path(result["release"]) / PROFILE).replace("%", "%%"), self.unit.read_text())
+        self.assertEqual(key_before, (key.stat().st_ino, key.read_bytes()))
+        self.assertEqual(b"certified snapshot", cache.read_bytes())
+        self.assertEqual(result, self.invoke(*args, pin=renewed))
+        self.assertEqual(1, self.log.read_text().count("--user stop "))
 
     def test_receipt_command_uses_the_installed_profile_custody_and_state(self):
         self.env["XDG_DATA_HOME"] = str(self.base / "data's $literal %")

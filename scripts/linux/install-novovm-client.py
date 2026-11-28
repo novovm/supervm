@@ -166,13 +166,15 @@ def client_environment(release, state, credential_dir):
     }
 
 
-def unit_text(release, arguments, state, credential_dir):
+def unit_text(release, arguments, state, credential_dir, *, preflight=True):
     # ':' disables systemd command-line environment expansion, including literal $ in XDG paths.
     program = ":" + str(release / CLIENT)
     argv = " ".join(unit_arg(v) for v in (program, *arguments))
-    condition = " ".join(
-        unit_arg(v) for v in (program, arguments[0], "check-installed-profile", arguments[2])
-    )
+    condition = ""
+    if preflight:
+        condition = "ExecCondition=" + " ".join(
+            unit_arg(v) for v in (program, arguments[0], "check-installed-profile", arguments[2])
+        ) + "\n"
     environment = "".join(
         f"Environment={unit_arg(name+'='+value)}\n"
         for name, value in client_environment(release, state, credential_dir).items()
@@ -185,7 +187,7 @@ def unit_text(release, arguments, state, credential_dir):
         description = "NOVOVM verified state follower"
     return (
         f"[Unit]\nDescription={description}\n\n[Service]\nType=exec\n"
-        f"{environment}UMask=0077\nExecCondition={condition}\nExecStart={argv}\n"
+        f"{environment}UMask=0077\n{condition}ExecStart={argv}\n"
         "Restart=on-failure\nRestartSec=5s\n\n[Install]\nWantedBy=default.target\n"
     )
 
@@ -251,6 +253,30 @@ def install_release(root, dest, files):
             stage.rename(dest)
     else:
         preflight_release(dest, files)
+
+
+def previous_follower(unit, previous, pin, root, files, state, credential_dir):
+    raw = artifact(previous, MANIFEST, pin).read_bytes()
+    manifest = json.loads(raw)
+    old_files = {entry["path"]: entry["sha256"] for entry in manifest["artifacts"]}
+    old_runtime = {name: sha for name, sha in old_files.items() if name.startswith("aoem/linux/core/")}
+    new_runtime = {name: sha for name, sha in files.items() if name.startswith("aoem/linux/core/")}
+    require(manifest["target"] == "x86_64-unknown-linux-gnu"
+            and old_files[CLIENT] == files[CLIENT] and old_runtime == new_runtime,
+            "profile renewal requires the installed Client and AOEM release")
+    old_profile = artifact(previous, PROFILE, old_files[PROFILE])
+    before = json.loads(old_profile.read_bytes())
+    after = json.loads(artifact(root, PROFILE, files[PROFILE]).read_bytes())
+    old_expiry = before["verification"]["minimum_finalized_checkpoint"].pop("valid_until_unix_ms")
+    new_expiry = after["verification"]["minimum_finalized_checkpoint"].pop("valid_until_unix_ms")
+    require(type(old_expiry) is int and type(new_expiry) is int and new_expiry > old_expiry and before == after,
+            "profile renewal must only extend the same pinned checkpoint")
+    follow = [str(old_profile), "follow-state", old_files[PROFILE]]
+    current = unit.read_text()
+    require(current in (unit_text(previous, follow, state, credential_dir),
+                        unit_text(previous, follow, state, credential_dir, preflight=False)),
+            "installed follower does not match the previous release and owner")
+    return current
 
 
 def check_unit(unit, text, must_be_loaded=False, stopped_follower=None, timeout=None):
@@ -376,6 +402,8 @@ def main():
                         help="wait for the matching resident Client to exit normally")
     parser.add_argument("--public-read-snapshot-height", type=positive_u64)
     parser.add_argument("--public-read-max-state-nodes", type=positive_u64)
+    parser.add_argument("--renew-profile-from-manifest-sha256",
+                        help="replace the pinned ordinary follower with a newer expiry for the same checkpoint")
     args = parser.parse_args()
     require(sys.platform == "linux" and os.getuid() != 0, "run as the intended non-root Linux user")
     height, nodes = args.public_read_snapshot_height, args.public_read_max_state_nodes
@@ -383,6 +411,11 @@ def main():
     require(not args.stop_public_read or nodes is not None, "stop requires the installed public read settings")
     pin = args.release_manifest_sha256.lower()
     require(HEX.fullmatch(pin), "invalid release manifest SHA-256")
+    renewal = args.renew_profile_from_manifest_sha256
+    if renewal:
+        renewal = renewal.lower()
+        require(HEX.fullmatch(renewal) and renewal != pin and nodes is None and not args.stop_public_read,
+                "profile renewal requires a distinct installed ordinary follower manifest")
     os.umask(0o077)
     root = plain(args.package_root.absolute())
     files = release_files(root, pin)
@@ -413,7 +446,16 @@ def main():
         with lock_path.open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             old = unit_text(dest, follow, state, credential_dir) if marker and not args.stop_public_read else None
-            active, switching = check_unit(unit, text, must_be_loaded=args.stop_public_read, stopped_follower=old)
+            renewing = False
+            if renewal:
+                require(unit.is_file(), "installed follower is required for profile renewal")
+                if unit.read_text() != text:
+                    previous = plain(dest.parent / renewal)
+                    old = previous_follower(unit, previous, renewal, root, files, state, credential_dir)
+                    active, _ = check_unit(unit, old, must_be_loaded=True)
+                    renewing = True
+            if not renewing:
+                active, switching = check_unit(unit, text, must_be_loaded=args.stop_public_read, stopped_follower=old)
             if args.stop_public_read:
                 stop_public_read(unit, text, marker)
             else:
@@ -422,7 +464,11 @@ def main():
                 install_release(root, dest, files)
                 provision_owner_credential(credential_dir, state)
                 install_receipt_command(receipt_command, dest, profile_pin, state, credential_dir)
-                if switching or not unit.exists():
+                if renewing:
+                    check_unit(unit, old, must_be_loaded=True)
+                    subprocess.run(["systemctl", "--user", "stop", UNIT], check=True)
+                    write_unit(unit, text, old)
+                elif switching or not unit.exists():
                     write_unit(unit, text, old if switching else None)
                 subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
                 active, _ = check_unit(unit, text, must_be_loaded=True)
