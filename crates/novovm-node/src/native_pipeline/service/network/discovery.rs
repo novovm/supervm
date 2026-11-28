@@ -12,7 +12,7 @@ use novovm_network::{
     transport_binding::BoundSecureChannelV1,
 };
 
-type Pins = (u64, [u8; 32], [u8; 32]);
+pub(super) type Pins = (u64, [u8; 32], [u8; 32]);
 type Lookup<'a> = Pin<Box<dyn Future<Output = Result<LookupResult>> + 'a>>;
 const TAG: &[u8; 8] = b"NVDISC01";
 #[cfg(test)]

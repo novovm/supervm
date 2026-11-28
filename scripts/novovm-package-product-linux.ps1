@@ -1001,6 +1001,22 @@ reuses it when opening the protected local transport identity. Restoring a
 device requires both that credential and its original XDG_STATE_HOME state.
 Preserve the local state and old release for recovery. Logout/boot availability
 depends on the user's systemd session and the host's existing linger policy.
+## NOVONET authenticated discovery bootstrap
+Run the packaged novovm-native-client (novovm-native-client.exe on Windows)
+with <bootstrap-config.json> run-discovery-bootstrap <config-sha256>. The JSON
+requires chain_id, 32-byte genesis and protocol arrays, absolute library and
+state_directory paths, library_sha256, nameserver, bind and advertised_direct.
+Optional relays are approved HTTPS Iroh contacts. Omit them for direct-only
+operation. Public read publishers use approved relay coordinates to reach
+the bootstrap; advertise a connected relay for this use.
+Use a fixed IPv4 UDP port, an existing dedicated private state directory, and
+the package's matching AOEM library. Windows uses the running account's DPAPI
+and requires a directory ACL restricted to that account and administrators.
+Linux uses the existing owner credential via CREDENTIALS_DIRECTORY and mode
+0700 state. Preserve the directory and account across restarts. This role
+accepts authenticated discovery and signed read referrals; it owns no voting
+key, database, or read-query service. No listener is installed by default.
+
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "README.md")
 
   if ($windowsPackage) {
@@ -1093,6 +1109,22 @@ Keep existing identities, protected policy, databases, signing history and NOVOC
 data. Windows local EXE authentication results do not qualify C/D installation
 or A/B/C/D external routes/reconnect. B's services remain outside this package.
 ML-DSA-65 identity authentication is not post-quantum key agreement.
+## NOVONET authenticated discovery bootstrap
+Run the packaged novovm-native-client (novovm-native-client.exe on Windows)
+with <bootstrap-config.json> run-discovery-bootstrap <config-sha256>. The JSON
+requires chain_id, 32-byte genesis and protocol arrays, absolute library and
+state_directory paths, library_sha256, nameserver, bind and advertised_direct.
+Optional relays are approved HTTPS Iroh contacts. Omit them for direct-only
+operation. Public read publishers use approved relay coordinates to reach
+the bootstrap; advertise a connected relay for this use.
+Use a fixed IPv4 UDP port, an existing dedicated private state directory, and
+the package's matching AOEM library. Windows uses the running account's DPAPI
+and requires a directory ACL restricted to that account and administrators.
+Linux uses the existing owner credential via CREDENTIALS_DIRECTORY and mode
+0700 state. Preserve the directory and account across restarts. This role
+accepts authenticated discovery and signed read referrals; it owns no voting
+key, database, or read-query service. No listener is installed by default.
+
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath 'README.md')
   }
 

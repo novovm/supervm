@@ -27,6 +27,10 @@ use novovm_network::{
 };
 mod diagnostic;
 mod discovery;
+#[cfg(any(windows, target_os = "linux"))]
+mod discovery_bootstrap;
+#[cfg(any(windows, target_os = "linux"))]
+pub use discovery_bootstrap::run_discovery_bootstrap;
 #[cfg(test)]
 pub(in crate::native_pipeline::service) use discovery::test_slow_cached_receipt;
 pub use discovery::{
