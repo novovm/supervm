@@ -10,6 +10,7 @@ use novovm_network::{
         NovoRudpPacingProfile, NovoRudpWindowConfig,
     },
 };
+use novovm_protocol::native_query::IdentityStatusV1;
 use std::{net::UdpSocket, sync::Mutex};
 
 struct FixtureReader {
@@ -175,13 +176,19 @@ async fn exercise(a: TransportIdentity, b: TransportIdentity) -> Result<()> {
     assert!(gate.request(&peer, "login_complete", &old).await?.is_some());
     assert!(gate.request(&peer, "events", &Value::Null).await?.is_none());
     assert!(gate.request(&peer, "login_complete", &old).await.is_err());
+    view.lock().unwrap().revision += 1;
+    assert!(gate.request(&peer, "events", &Value::Null).await.is_err());
+    assert!(gate.sessions.is_empty());
+    let replacement = begin(&mut gate, &peer, &b).await?;
+    gate.request(&peer, "login_complete", &serde_json::to_value(replacement)?)
+        .await?;
     view.lock().unwrap().revoked = true;
     assert!(gate.request(&peer, "events", &Value::Null).await.is_err());
     assert!(gate.sessions.is_empty());
     {
         let mut state = view.lock().unwrap();
         state.revoked = false;
-        state.revision = 2;
+        state.revision += 1;
     }
     assert!(gate.request(&peer, "login_complete", &old).await.is_err());
     let fresh = begin(&mut gate, &peer, &b).await?;

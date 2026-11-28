@@ -4,7 +4,7 @@ use novovm_asas_plugin::UcaAuthorityConfigV1;
 use novovm_network::product_overlay::{peer_id_from_mldsa65_public_key_v1, TransportIdentity};
 use novovm_protocol::{
     asas_login::{application_id, LoginChallengeV1, LoginProofV1, CONTEXT},
-    native_query::{ApplicationGrantViewV1, IdentityStatusV1, UcaIdentityIdV1},
+    native_query::{ApplicationGrantViewV1, UcaIdentityIdV1},
     uca_application::ApplicationGrantSelectorV1,
 };
 use serde_json::json;
@@ -220,21 +220,6 @@ impl LoginGate {
             sessions: BTreeMap::new(),
         })
     }
-    fn current(view: &ApplicationGrantViewV1, selector: &ApplicationGrantSelectorV1) -> Result<()> {
-        ensure!(
-            view.state_root != [0; 32]
-                && view.revision > 0
-                && !view.revoked
-                && view.identity_status == IdentityStatusV1::Active
-                && view.issuer_key_ref != [0; 32]
-                && view.issuer_key_ref == view.identity_key_ref
-                && view.issuer_key_ref != selector.device
-                && view.not_before_height <= view.height
-                && view.height < view.expires_at_height,
-            "current UCA application permission required"
-        );
-        Ok(())
-    }
     pub(super) async fn request(
         &mut self,
         peer: &AuthenticatedApplicationPeerV1,
@@ -275,7 +260,10 @@ impl LoginGate {
                 device: key_ref(&begin.public_key)?,
             };
             let view = self.authority.read(&selector).await?;
-            Self::current(&view, &selector)?;
+            ensure!(
+                view.permits_device_at_observed_height(&selector, view.revision),
+                "current UCA application permission required"
+            );
             let challenge = LoginChallengeV1 {
                 version: 1,
                 selector,
@@ -323,9 +311,11 @@ impl LoginGate {
                 &proof.signature,
             )?;
             let view = self.authority.read(&proof.challenge.selector).await?;
-            Self::current(&view, &proof.challenge.selector)?;
             ensure!(
-                view.revision == proof.challenge.revision && peer.is_current(),
+                view.permits_device_at_observed_height(
+                    &proof.challenge.selector,
+                    proof.challenge.revision
+                ) && peer.is_current(),
                 "login grant changed"
             );
             let response = json!({"version":1,"status":"authenticated","identity":proof.challenge.selector.identity,
@@ -344,9 +334,9 @@ impl LoginGate {
         let challenge = session.challenge.clone();
         let observed = self.authority.read(&challenge.selector).await;
         let checked = observed.and_then(|view| {
-            Self::current(&view, &challenge.selector)?;
             ensure!(
-                view.revision == challenge.revision && peer.is_current(),
+                view.permits_device_at_observed_height(&challenge.selector, challenge.revision)
+                    && peer.is_current(),
                 "UCA login revoked or superseded"
             );
             Ok(())
