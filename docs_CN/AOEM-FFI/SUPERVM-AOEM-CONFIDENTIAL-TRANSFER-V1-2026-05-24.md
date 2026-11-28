@@ -1,5 +1,7 @@
 # SUPERVM AOEM confidential_transfer_v1 宿主接入说明
 
+AOEM 源提交 [1377cd1e](https://github.com/AOEM-Core/AOEM/commit/1377cd1e7c1d43a4bf81cb16a169319772cf3e84) 已停用历史 `zk_merkle_membership_v1`，新版会拒绝该证明配置。UCA 便携验真的交付条件见 [UCA 原生节点交接](../../docs/NOVOVM_UCA_NATIVE_HANDOFF.md#终局证明与发布条件)。
+
 ## 定位
 
 `confidential_transfer_v1` 是基于现有 AOEM RingCT 的宿主产品语义包装。
@@ -20,7 +22,6 @@ SUPERVM host
 ```text
 compute.zk.resident_proof_v1
   merkle_membership_v1
-  zk_merkle_membership_v1
 ```
 
 RingCT 继续作为 FULLMAX 隐私交易能力保留：

@@ -1,5 +1,7 @@
 # SUPERVM AOEM Proof Engine Host Integration V1
 
+AOEM 源提交 [1377cd1e](https://github.com/AOEM-Core/AOEM/commit/1377cd1e7c1d43a4bf81cb16a169319772cf3e84) 已停用历史 `zk_merkle_membership_v1`，新版会拒绝该证明配置。UCA 便携验真的交付条件见 [UCA 原生节点交接](../../docs/NOVOVM_UCA_NATIVE_HANDOFF.md#终局证明与发布条件)。
+
 ## 定位
 
 本文只说明 AOEM Proof Engine 在 SUPERVM 中的宿主接入方式。AOEM 在 SUPERVM 中是单层 FULLMAX 包，不是 Proof-only 包。全能力总览请先看：
@@ -74,7 +76,6 @@ aoem-bindings:
 
 Proof profiles:
   merkle_membership_v1
-  zk_merkle_membership_v1
 
 Resident asset lifecycle:
   setup / list / select / release
