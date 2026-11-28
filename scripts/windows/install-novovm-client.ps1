@@ -136,21 +136,27 @@ $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $taskName = 'NOVOVM-Native-Client-' + $identity.User.Value
 $profilePin = $ProfileSha256.ToLowerInvariant()
 $followArguments = '"' + $profile + '" follow-state ' + $profilePin
-$publicRead = $PSBoundParameters.ContainsKey('PublicReadSnapshotHeight')
-if ($publicRead -ne $PSBoundParameters.ContainsKey('PublicReadMaxStateNodes') -or
-    ($publicRead -and (!$PublicReadSnapshotHeight -or !$PublicReadMaxStateNodes))) {
-    throw 'Public reading requires both an explicit finalized height and a positive state node limit.'
+$fixedStart = $PSBoundParameters.ContainsKey('PublicReadSnapshotHeight')
+$publicRead = $PSBoundParameters.ContainsKey('PublicReadMaxStateNodes')
+if (($fixedStart -and (!$publicRead -or !$PublicReadSnapshotHeight)) -or
+    ($publicRead -and !$PublicReadMaxStateNodes)) {
+    throw 'Public reading requires a positive state node limit and, if specified, a positive finalized height.'
 }
-if ($Action -eq 'StopPublicRead' -and !$publicRead) { throw 'Specify the installed public read height and node limit.' }
+if ($Action -eq 'StopPublicRead' -and !$publicRead) { throw 'Specify the installed public read settings.' }
 $arguments = $followArguments
 $stopMarker = $null
 if ($publicRead) {
     $local = [Environment]::GetFolderPath('LocalApplicationData')
     if (![IO.Path]::IsPathRooted($local)) { throw 'Current user LocalAppData directory required.' }
     $stopMarker = Join-Path $local "NOVOVM/client-control/public-read-$profilePin.stop"
-    $arguments = '"' + $profile + '" run-public-read-snapshot ' + $profilePin + ' ' +
-        $PublicReadSnapshotHeight.ToString([Globalization.CultureInfo]::InvariantCulture) + ' ' +
-        $PublicReadMaxStateNodes.ToString([Globalization.CultureInfo]::InvariantCulture) + ' "' + $stopMarker + '"'
+    $budget = $PublicReadMaxStateNodes.ToString([Globalization.CultureInfo]::InvariantCulture)
+    if ($fixedStart) {
+        $height = $PublicReadSnapshotHeight.ToString([Globalization.CultureInfo]::InvariantCulture)
+        $arguments = '"' + $profile + '" run-public-read-snapshot ' + $profilePin + ' ' +
+            $height + ' ' + $budget + ' "' + $stopMarker + '"'
+    } else {
+        $arguments = $followArguments + ' --public-read-max-state-nodes ' + $budget + ' "' + $stopMarker + '"'
+    }
 }
 $directory = Split-Path -Parent $program
 $plan = [ordered]@{ task = $taskName; startup = 'current-user-logon'; program = $program;

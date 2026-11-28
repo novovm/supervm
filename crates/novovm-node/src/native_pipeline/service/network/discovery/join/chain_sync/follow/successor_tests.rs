@@ -59,7 +59,7 @@ fn advancing_route_requires_the_state_root_on_the_authenticated_path() -> Result
         chain,
         cache: StateCache::open(scratch.path().join("nodes"))?,
         locators: Locators::open(scratch.path().join("locators.json"), &profile, &consumer)?,
-        profile,
+        profile: Arc::new(profile),
         identity: consumer.clone(),
         domain: domain.clone(),
         native_cursor: 0,
@@ -67,6 +67,7 @@ fn advancing_route_requires_the_state_root_on_the_authenticated_path() -> Result
         reported: None,
         retrying: false,
         waiting_finality: None,
+        publication_height: None,
     };
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
         let local = || {

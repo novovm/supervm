@@ -175,7 +175,12 @@ def unit_text(release, arguments, state, credential_dir):
         f"Environment={unit_arg(name+'='+value)}\n"
         for name, value in client_environment(release, state, credential_dir).items()
     )
-    description = "NOVOVM verified state follower" if arguments[1] == "follow-state" else "NOVOVM public read-only snapshot"
+    if arguments[1] != "follow-state":
+        description = "NOVOVM public read-only snapshot"
+    elif len(arguments) > 3:
+        description = "NOVOVM verified state follower with public read-only service"
+    else:
+        description = "NOVOVM verified state follower"
     return (
         f"[Unit]\nDescription={description}\n\n[Service]\nType=exec\n"
         f"{environment}UMask=0077\nExecStart={argv}\n"
@@ -368,8 +373,8 @@ def main():
     args = parser.parse_args()
     require(sys.platform == "linux" and os.getuid() != 0, "run as the intended non-root Linux user")
     height, nodes = args.public_read_snapshot_height, args.public_read_max_state_nodes
-    require((height is None) == (nodes is None), "public reading requires both height and node limit")
-    require(not args.stop_public_read or height is not None, "stop requires the installed public read height and node limit")
+    require(height is None or nodes is not None, "public reading requires a positive state node limit")
+    require(not args.stop_public_read or nodes is not None, "stop requires the installed public read settings")
     pin = args.release_manifest_sha256.lower()
     require(HEX.fullmatch(pin), "invalid release manifest SHA-256")
     os.umask(0o077)
@@ -385,10 +390,13 @@ def main():
     follow = [str(dest / PROFILE), "follow-state", profile_pin]
     marker = None
     arguments = follow
-    if height is not None:
+    if nodes is not None:
         marker = plain(state / "NOVOVM/client-control" / f"public-read-{profile_pin}.stop")
-        arguments = [str(dest / PROFILE), "run-public-read-snapshot", profile_pin,
-                     str(height), str(nodes), str(marker)]
+        if height is None:
+            arguments = [*follow, "--public-read-max-state-nodes", str(nodes), str(marker)]
+        else:
+            arguments = [str(dest / PROFILE), "run-public-read-snapshot", profile_pin,
+                         str(height), str(nodes), str(marker)]
     text = unit_text(dest, arguments, state, credential_dir)
     if not args.plan:
         if args.stop_public_read:

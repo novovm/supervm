@@ -62,27 +62,29 @@ Privacy-only 的发送、收件和回执只走合格隐私路径。缺少合格�
 
 ### 已同步 Client 的公开只读服务
 
-Windows 安装器默认由当前用户的登录任务运行 `follow-state`。已同步的设备可以用
-`-PublicReadSnapshotHeight <高度> -PublicReadMaxStateNodes <节点数>` 显式选择同一个
-任务从指定已验高度开始供给。既有同步任务需要先停止才能切换。前台使用
-`novovm-native-client <profile> run-public-read-snapshot <profile-sha256> <高度> <节点数>`。
-公开读取任务校验原缓存并复用本机通信身份，只经发行配置允许的中继公布短租约。它会
+Windows 和 Linux 安装器默认持续同步。选用 Windows 的 `-PublicReadMaxStateNodes <节点数>`
+或 Linux 的 `--public-read-max-state-nodes <节点数>`，同一个 Client 在首次同步并验真状态后启动
+只读供给。重启时会重新验证已有缓存，缓存有效即可恢复供给。前台可运行
+`novovm-native-client <profile> follow-state <profile-sha256> --public-read-max-state-nodes <节点数>`。
+供给复用本机通信身份，只经发行配置允许的中继公布短租约。它会
 认证引导、采纳该域内由对应固定公钥签署的更新坐标，并定期续租。
 
-停止已安装的公开读取任务时，使用相同安装参数和 `-Action StopPublicRead`。前台可以
+加上 Windows 的 `-PublicReadSnapshotHeight <高度>` 或 Linux 的
+`--public-read-snapshot-height <高度>`，可从指定已验高度启动单独的常驻读取命令。
+切换已安装任务时，先停止同一发行版本原有的同步任务。
+
+停止已安装的公开读取任务时，使用相同安装参数和 `-Action StopPublicRead`
+或 `--stop-public-read`。联合模式会同时结束跟随和读取。前台可以
 用 Ctrl+C。任务退出会关闭读取端点。最低终结检查点到期也会停止签发并关闭端点。已从
 引导取得的租约仍受原有有效期约束。常驻任务定期观察本地缓存，独立验签后继区块并
 验证完整状态树后更新服务高度，同时保留上一份已验证状态供正在同步的会话使用。
-缓存未写齐时继续服务当前已验高度。同步来源仍由 `follow-state` 提供。限时回环和
+缓存未写齐时继续服务当前已验高度。联合模式持续用 `follow-state` 更新缓存。限时回环和
 限时公开读取命令继续提供显式选择的固定高度。
 
-Linux 普通用户安装器默认在登录时通过 `novovm-native-client.service` 运行 `follow-state`。
-设备已同步到所需高度后，可先用 `systemctl --user stop novovm-native-client.service`
-停止同一发行版本的跟随服务，再在原安装参数后增加
-`--public-read-snapshot-height 高度 --public-read-max-state-nodes 节点数`。
-两个值都是正的 64 位无符号整数。加 `--plan` 可预览启动命令与停止标记路径。
-已启用的常驻服务复用原私有凭据、通信身份和缓存。使用同一参数加 `--stop-public-read`
-会保留停止标记并等待服务退出。再次执行完全相同的显式安装可恢复服务。
+Linux 普通用户安装器使用 `novovm-native-client.service`，可用
+`systemctl --user stop novovm-native-client.service` 停止原跟随服务。高度和节点上限
+使用正的 64 位无符号整数。加 `--plan` 可预览启动命令与停止标记路径。
+再次执行完全相同的显式安装可恢复服务，并复用原私有凭据、通信身份和缓存。
 其他发行版本、已改动的 unit 或不同高度与预算需要按发行包的显式切换步骤处理。
 
 Linux 跨机冷同步验收在有独立 systemd 用户会话的测试账户运行。预先从发行方核对清单与配置摘要，

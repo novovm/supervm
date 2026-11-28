@@ -24,7 +24,8 @@ use std::{collections::BTreeMap, fs, io::Write};
 mod chain_sync;
 mod read_snapshot_service;
 pub use chain_sync::{
-    export_activation_parent, follow_installed_state, sync_installed_chain, sync_installed_state,
+    export_activation_parent, follow_and_serve_installed_state, follow_installed_state,
+    sync_installed_chain, sync_installed_state,
     verify_installed_uca_execution,
 };
 pub use read_snapshot_service::{

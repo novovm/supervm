@@ -17,7 +17,7 @@ use read_route::{boxed_read, ReadRoute};
 pub(super) use receipt::ReceiptSearch;
 pub(crate) mod read_snapshot;
 mod state;
-pub use follow::follow_installed_state;
+pub use follow::{follow_and_serve_installed_state, follow_installed_state};
 use state::{StateCache, StateProgress};
 
 const MAX_HEADERS_PER_PASS: u64 = 128;

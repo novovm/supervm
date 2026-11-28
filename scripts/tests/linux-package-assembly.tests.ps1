@@ -555,11 +555,20 @@ if ($windowsPackage) {
       (Test-Path -LiteralPath $installed)) {
     throw 'Explicit public read plan must use the same task and pinned installation without writing files'
   }
+  $combinedPlan = & $installer -Action Plan -ReleaseManifestSha256 $pin -PublicReadMaxStateNodes 19 |
+    ConvertFrom-Json
+  if ($combinedPlan.task -ne $plan.task -or $combinedPlan.program -ne $plan.program -or
+      $combinedPlan.arguments -cne ($plan.arguments + ' --public-read-max-state-nodes 19 "' +
+      $combinedPlan.public_read_stop_marker + '"') -or
+      (Test-Path -LiteralPath $combinedPlan.public_read_stop_marker) -or
+      (Test-Path -LiteralPath $installed)) {
+    throw 'Combined plan must reuse the installed follower and add the exact public-read arguments'
+  }
   $partialOptInRejected = $false
   try {
     & $installer -Action Plan -ReleaseManifestSha256 $pin -PublicReadSnapshotHeight 42 | Out-Null
   } catch {
-    if ($_.Exception.Message -notlike '*requires both an explicit finalized height*') { throw }
+    if ($_.Exception.Message -notlike '*requires a positive state node limit*') { throw }
     $partialOptInRejected = $true
   }
   if (!$partialOptInRejected) { throw 'Partial public read opt-in was accepted' }

@@ -4,7 +4,7 @@ mod publication;
 use super::chain_sync::read_snapshot::ReadSnapshot;
 use super::{
     bind_carrier, client_identity, fingerprint, installed_state_base, profile_base,
-    read_installed_profile, state_path, wall_ms,
+    read_installed_profile, state_path, wall_ms, Profile,
 };
 use crate::native_pipeline::service::network::{
     query_carrier::{self, Ingress, QuerySlot, Read},
@@ -35,6 +35,7 @@ use std::{
     task::Poll,
     time::{Duration, Instant},
 };
+use tokio::sync::watch;
 
 pub fn serve_installed_read_snapshot(
     profile_path: &Path,
@@ -134,7 +135,6 @@ fn serve_snapshot(
         !public || profile.public_read_referrals(),
         "public read serving requires verification pins and approved relays"
     );
-    let pins = profile.pins();
     let identity = client_identity(&data, profile_base(profile_path)?, &profile, false)?;
     let snapshot = ReadSnapshot::open(
         &data,
@@ -144,30 +144,17 @@ fn serve_snapshot(
         max_state_nodes,
         verify_deadline,
     )?;
-    let locator_path = state_path(&data, &profile).join("read-snapshot.local.json");
-    let _public_owner = if public {
-        Some(local_locator::lock(&locator_path)?)
-    } else {
-        None
+    let run = SnapshotRun {
+        data: &data,
+        profile: &profile,
+        base: profile_base(profile_path)?,
+        identity,
+        snapshot,
+        height,
+        max_state_nodes,
+        duration,
+        public,
     };
-    let publication = if public {
-        Some(publication::Publication::new(
-            &profile,
-            profile_base(profile_path)?,
-            &identity,
-            duration.is_none(),
-        )?)
-    } else {
-        None
-    };
-    let carrier = if public {
-        profile.carrier_config()?.with_relay_only()?
-    } else {
-        IrohConfigV1::new(&[], Ipv4Addr::LOCALHOST.into())?
-            .with_bind_address((Ipv4Addr::LOCALHOST, 0).into())?
-    }
-    .with_service_concurrency(ServiceConcurrencyV1::from_host())
-    .with_connection_ceiling(CARRIER_CONNECTION_CEILING)?;
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
@@ -177,53 +164,125 @@ fn serve_snapshot(
             } else {
                 None
             };
-            let owner = bind_carrier(carrier).await?;
-            let (requests, reads) = mpsc::sync_channel::<Read>(1);
-            let snapshot = Arc::new(Mutex::new(snapshot));
-            let reader = snapshot.clone();
-            let worker = tokio::task::spawn_blocking(move || {
-                while let Ok(read) = reads.recv() {
-                    let Ok(mut snapshot) = reader.lock() else {
-                        break;
-                    };
-                    let _ = read.answer.send(snapshot.answer(&read.request.query));
-                }
-            });
-            // Snapshot reads share the existing bounded worker queue. A live
-            // stream does not reserve the worker between requests.
-            let admissions = QuerySlot::with_capacity(CARRIER_CONNECTION_CEILING);
-            let ingress = Ingress {
-                requests,
-                slot: Some(Arc::new(admissions)),
-                peers: None,
-            };
-            let serving_height = AtomicU64::new(height);
-            let refresh_stopped = Arc::new(AtomicBool::new(false));
-            let served =
-                if let Some(publication) = publication {
-                    owner.with_relay_only_service_v1(async |scope| {
+            run.run(wait_for_stop(stop.as_mut())).await
+        })
+}
+
+struct SnapshotRun<'a> {
+    data: &'a Path,
+    profile: &'a Profile,
+    base: &'a Path,
+    identity: TransportIdentity,
+    snapshot: ReadSnapshot,
+    height: u64,
+    max_state_nodes: NonZeroUsize,
+    duration: Option<Duration>,
+    public: bool,
+}
+
+impl SnapshotRun<'_> {
+    async fn run(self, stop: impl Future<Output = Result<()>>) -> Result<()> {
+        let Self {
+            data,
+            profile,
+            base,
+            identity,
+            snapshot,
+            height,
+            max_state_nodes,
+            duration,
+            public,
+        } = self;
+        let pins = profile.pins();
+        let locator_path = state_path(data, profile).join("read-snapshot.local.json");
+        let _public_owner = if public {
+            Some(local_locator::lock(&locator_path)?)
+        } else {
+            None
+        };
+        let publication = if public {
+            Some(publication::Publication::new(
+                profile,
+                base,
+                &identity,
+                duration.is_none(),
+            )?)
+        } else {
+            None
+        };
+        let carrier = if public {
+            profile.carrier_config()?.with_relay_only()?
+        } else {
+            IrohConfigV1::new(&[], Ipv4Addr::LOCALHOST.into())?
+                .with_bind_address((Ipv4Addr::LOCALHOST, 0).into())?
+        }
+        .with_service_concurrency(ServiceConcurrencyV1::from_host())
+        .with_connection_ceiling(CARRIER_CONNECTION_CEILING)?;
+        let owner = bind_carrier(carrier).await?;
+        if public && duration.is_none() {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "event":"public_read_snapshot_ready", "height":height,
+                    "transport_identity_sha256":fingerprint(identity.public_key()),
+                })
+            );
+        }
+        let (requests, reads) = mpsc::sync_channel::<Read>(1);
+        let snapshot = Arc::new(Mutex::new(snapshot));
+        let reader = snapshot.clone();
+        let worker = tokio::task::spawn_blocking(move || {
+            while let Ok(read) = reads.recv() {
+                let Ok(mut snapshot) = reader.lock() else {
+                    break;
+                };
+                let _ = read.answer.send(snapshot.answer(&read.request.query));
+            }
+        });
+        // Snapshot reads share the existing bounded worker queue. A live
+        // stream does not reserve the worker between requests.
+        let admissions = QuerySlot::with_capacity(CARRIER_CONNECTION_CEILING);
+        let ingress = Ingress {
+            requests,
+            slot: Some(Arc::new(admissions)),
+            peers: None,
+        };
+        let serving_height = AtomicU64::new(height);
+        let refresh_stopped = Arc::new(AtomicBool::new(false));
+        let served = if let Some(publication) = publication {
+            owner
+                .with_relay_only_service_v1(async |scope| {
                     let deadline = duration.map(|duration| Instant::now() + duration);
                     let publish = publication.run(
-                        scope, &identity, pins, || serving_height.load(Ordering::Acquire), deadline,
+                        scope,
+                        &identity,
+                        pins,
+                        || serving_height.load(Ordering::Acquire),
+                        deadline,
                     );
                     let refresh = refresh_resident_snapshot(
-                        &snapshot, &serving_height, max_state_nodes, refresh_stopped.clone(),
+                        &snapshot,
+                        &serving_height,
+                        max_state_nodes,
+                        refresh_stopped.clone(),
                     );
                     tokio::select! {
                         biased;
-                        result = wait_for_stop(stop.as_mut()) => result,
+                        result = stop => result,
                         result = publish => result,
                         result = serve(scope, identity.clone(), pins, ingress, None) => result,
                         result = refresh, if duration.is_none() => result,
                     }
-                }).await
-                } else {
-                    owner
+                })
+                .await
+        } else {
+            owner
                 .with_continuous_service_v4(
                     || Ok(()),
                     |scope| {
                         Box::pin(async move {
-                            let duration = duration.context("loopback snapshot duration required")?;
+                            let duration =
+                                duration.context("loopback snapshot duration required")?;
                             let deadline = Instant::now() + duration;
                             let _locator =
                                 local_locator(scope, &identity, pins, locator_path, duration)?;
@@ -241,21 +300,129 @@ fn serve_snapshot(
                     },
                 )
                 .await
-                };
-            refresh_stopped.store(true, Ordering::Relaxed);
-            let closed = owner.close().await;
-            worker.await.context("snapshot query worker failed")?;
-            served.and(closed)?;
-            if duration.is_none() {
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "event":"public_read_stopped", "height":serving_height.load(Ordering::Acquire)
-                    })
-                );
+        };
+        refresh_stopped.store(true, Ordering::Relaxed);
+        let closed = owner.close().await;
+        worker.await.context("snapshot query worker failed")?;
+        served.and(closed)?;
+        if duration.is_none() {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "event":"public_read_stopped", "height":serving_height.load(Ordering::Acquire)
+                })
+            );
+        }
+        Ok(())
+    }
+}
+
+pub(super) struct FollowedRead<'a> {
+    pub(super) profile_path: &'a Path,
+    pub(super) profile_pin: &'a str,
+    pub(super) max_state_nodes: NonZeroUsize,
+    pub(super) stop_file: Option<&'a Path>,
+}
+
+impl FollowedRead<'_> {
+    pub(super) fn stopped_before_start(&self, profile: &Profile) -> Result<bool> {
+        ensure!(
+            profile.public_read_referrals(),
+            "public read serving requires verification pins and approved relays"
+        );
+        if let Some(path) = self.stop_file {
+            ensure!(
+                path.is_absolute(),
+                "snapshot stop marker must use an absolute path"
+            );
+            return stop_requested(path);
+        }
+        Ok(false)
+    }
+
+    pub(super) async fn run(
+        &self,
+        identity: TransportIdentity,
+        profile: &Profile,
+        data: &Path,
+        mut heights: watch::Receiver<Option<u64>>,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> Result<()> {
+        let base = profile_base(self.profile_path)?;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        loop {
+            let height = *heights.borrow_and_update();
+            let Some(height) = height else {
+                tokio::select! {
+                    _ = shutdown.wait_for(|stop| *stop) => return Ok(()),
+                    ready = heights.changed() => if ready.is_err() { return Ok(()); },
+                }
+                continue;
+            };
+            let root = data.to_owned();
+            let path = self.profile_path.to_owned();
+            let pin = self.profile_pin.to_owned();
+            let max_state_nodes = self.max_state_nodes;
+            let cancel_open = cancelled.clone();
+            let mut opening = tokio::task::spawn_blocking(move || {
+                ReadSnapshot::open_cancellable(
+                    &root,
+                    &path,
+                    &pin,
+                    height,
+                    max_state_nodes,
+                    Instant::now() + Duration::from_secs(300),
+                    Some(cancel_open),
+                )
+            });
+            let opened = tokio::select! {
+                biased;
+                _ = shutdown.wait_for(|stop| *stop) => {
+                    cancelled.store(true, Ordering::Relaxed);
+                    let _ = opening.await.context("snapshot open worker failed")?;
+                    return Ok(());
+                }
+                result = &mut opening => result.context("snapshot open worker failed")?,
+            };
+            match opened {
+                Ok(snapshot) => {
+                    let run = SnapshotRun {
+                        data,
+                        profile,
+                        base,
+                        identity: identity.clone(),
+                        snapshot,
+                        height,
+                        max_state_nodes,
+                        duration: None,
+                        public: true,
+                    };
+                    let result = run
+                        .run(async {
+                            let _ = shutdown.wait_for(|stop| *stop).await;
+                            Ok(())
+                        })
+                        .await;
+                    if *shutdown.borrow() {
+                        return result;
+                    }
+                    if let Err(error) = result {
+                        eprintln!("public snapshot service deferred: {error:#}");
+                    }
+                }
+                Err(error) => eprintln!("public snapshot not ready at {height}: {error:#}"),
             }
-            Ok(())
-        })
+            tokio::select! {
+                _ = shutdown.wait_for(|stop| *stop) => return Ok(()),
+                _ = tokio::time::sleep(Duration::from_secs(15)) => {},
+            }
+        }
+    }
+}
+
+pub(super) async fn installed_public_read_stop(file: Option<&Path>) -> Result<()> {
+    let mut stop = ResidentStop::new(file)?;
+    wait_for_stop(Some(&mut stop)).await
 }
 
 async fn refresh_resident_snapshot(

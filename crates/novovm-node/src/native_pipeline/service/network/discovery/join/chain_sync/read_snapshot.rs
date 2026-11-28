@@ -73,6 +73,26 @@ impl ReadSnapshot {
         max_state_nodes: NonZeroUsize,
         verify_deadline: Instant,
     ) -> Result<Self> {
+        Self::open_cancellable(
+            data,
+            profile_path,
+            profile_sha256,
+            height,
+            max_state_nodes,
+            verify_deadline,
+            None,
+        )
+    }
+
+    pub(in super::super) fn open_cancellable(
+        data: &Path,
+        profile_path: &Path,
+        profile_sha256: &str,
+        height: u64,
+        max_state_nodes: NonZeroUsize,
+        verify_deadline: Instant,
+        cancelled: Option<Arc<AtomicBool>>,
+    ) -> Result<Self> {
         let profile = read_installed_profile(profile_path, Some(profile_sha256))?;
         let (domain, anchor) = profile.verification_domain()?;
         validate_parent(&anchor)?;
@@ -119,12 +139,19 @@ impl ReadSnapshot {
         let mut nodes = SnapshotNodes {
             directory: nodes,
             verify_deadline: Some(verify_deadline),
-            cancelled: None,
+            cancelled,
         };
         let mut proof_index = BufWriter::new(tempfile::tempfile()?);
         let first_height = anchor.height + 1;
         let mut tip = anchor;
         for next in first_height..=height {
+            ensure!(
+                nodes
+                    .cancelled
+                    .as_ref()
+                    .is_none_or(|stop| !stop.load(Ordering::Relaxed)),
+                "snapshot verification stopped"
+            );
             ensure!(
                 Instant::now() < verify_deadline,
                 "snapshot verification deadline elapsed"
@@ -154,6 +181,7 @@ impl ReadSnapshot {
             "snapshot verification deadline elapsed"
         );
         nodes.verify_deadline = None;
+        nodes.cancelled = None;
         Ok(Self {
             headers,
             nodes,

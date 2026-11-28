@@ -1,10 +1,12 @@
 //! Installed-device sync on the original query owner. A failed route never
 //! discards a certified header or a verified content-addressed state node.
+use super::super::read_snapshot_service::{installed_public_read_stop, FollowedRead};
 use super::*;
 use novovm_network::discovery_control::native_chain_query_address;
 use novovm_network::iroh_transport::IrohPathObserverV1;
 use novovm_network::novorudp::endpoint::NativePeer;
-use std::collections::VecDeque;
+use std::{collections::VecDeque, num::NonZeroUsize};
+use tokio::sync::watch;
 mod locators;
 mod native_round;
 #[cfg(test)]
@@ -20,28 +22,66 @@ const IROH_SUCCESSOR_BUDGET: Duration = Duration::from_secs(10);
 const FOLLOW_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 pub fn follow_installed_state(path: &Path, profile_sha256: Option<&str>) -> Result<()> {
+    follow_on_stack(path, profile_sha256, None)
+}
+
+pub fn follow_and_serve_installed_state(
+    path: &Path,
+    profile_sha256: &str,
+    max_state_nodes: NonZeroUsize,
+    stop_file: Option<&Path>,
+) -> Result<()> {
+    follow_on_stack(
+        path,
+        Some(profile_sha256),
+        Some(FollowedRead {
+            profile_path: path,
+            profile_pin: profile_sha256,
+            max_state_nodes,
+            stop_file,
+        }),
+    )
+}
+
+fn follow_on_stack(
+    path: &Path,
+    profile_sha256: Option<&str>,
+    public: Option<FollowedRead<'_>>,
+) -> Result<()> {
     // Discovery refresh runs while the state-query carrier is still on the
     // call stack. Reserve the worker stack explicitly, including on Windows.
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .name("novovm-follow-state".into())
             .stack_size(FOLLOW_STACK_BYTES)
-            .spawn_scoped(scope, || follow_on_worker(path, profile_sha256))
+            .spawn_scoped(scope, || follow_on_worker(path, profile_sha256, public))
             .context("start native state follower")?
             .join()
             .map_err(|_| anyhow::anyhow!("native state follower panicked"))?
     })
 }
 
-fn follow_on_worker(path: &Path, profile_sha256: Option<&str>) -> Result<()> {
+fn follow_on_worker(
+    path: &Path,
+    profile_sha256: Option<&str>,
+    public: Option<FollowedRead<'_>>,
+) -> Result<()> {
     let (profile, domain, anchor) = installed_chain_profile(path, profile_sha256)?;
-    let identity = local_identity(&installed_state_base()?, profile_base(path)?, &profile)?;
+    if let Some(public) = &public {
+        if public.stopped_before_start(&profile)? {
+            return Ok(());
+        }
+    }
+    let data = installed_state_base()?;
+    let identity = local_identity(&data, profile_base(path)?, &profile)?;
     let chain = open_checkpoint(&profile, &identity, &domain, anchor)?;
     let cache = StateCache::open(chain.root.join("state-nodes"))?;
     let locators = Locators::open(chain.root.join("peer-locators.json"), &profile, &identity)?;
-    let follower = Follower {
+    let (height, published) =
+        watch::channel((chain.tip.height > anchor.height).then_some(chain.tip.height));
+    let mut follower = Follower {
         base: profile_base(path)?.to_owned(),
-        profile,
+        profile: Arc::new(profile),
         identity,
         domain,
         chain,
@@ -52,16 +92,35 @@ fn follow_on_worker(path: &Path, profile_sha256: Option<&str>) -> Result<()> {
         reported: None,
         retrying: false,
         waiting_finality: None,
+        publication_height: None,
     };
-    tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
-        .build()?
-        .block_on(boxed_read(|| follower.run()))
+        .build()?;
+    let Some(public) = public else {
+        return runtime.block_on(boxed_read(|| follower.run()));
+    };
+    let identity = follower.identity.clone();
+    let profile = follower.profile.clone();
+    follower.publication_height = Some(height);
+    let (shutdown, stop) = watch::channel(false);
+    runtime.block_on(async {
+        let publisher = boxed_read(|| public.run(identity, &profile, &data, published, stop));
+        tokio::pin!(publisher);
+        let result = tokio::select! {
+            result = boxed_read(|| follower.run()) => result,
+            result = installed_public_read_stop(public.stop_file) => result,
+            result = &mut publisher => return result,
+        };
+        shutdown.send_replace(true);
+        let stopped = publisher.await;
+        result.and(stopped)
+    })
 }
 
 struct Follower {
     base: PathBuf,
-    profile: Profile,
+    profile: Arc<Profile>,
     identity: TransportIdentity,
     domain: MessageDomain,
     chain: VerifiedHeaders,
@@ -72,6 +131,7 @@ struct Follower {
     reported: Option<(ParentPoint, Route)>,
     retrying: bool,
     waiting_finality: Option<PendingFinality>,
+    publication_height: Option<watch::Sender<Option<u64>>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -537,6 +597,9 @@ impl Follower {
         let state = self.cache.sync(session, tip).await?;
         self.chain.checkpoint_validity(wall_ms()?)?;
         self.snapshot = Some((tip, state));
+        if let Some(height) = &self.publication_height {
+            height.send_replace(Some(tip.height));
+        }
         Ok(Some(state))
     }
 

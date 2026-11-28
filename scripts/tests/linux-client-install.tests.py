@@ -258,7 +258,7 @@ sys.exit(int(os.environ.get('TEST_QUERY_EXIT', '0')))
 
     public = ("--public-read-snapshot-height", "42", "--public-read-max-state-nodes", "19")
 
-    def test_public_read_plan_needs_two_positive_u64_limits(self):
+    def test_public_read_plans_support_following_or_an_explicit_start_height(self):
         original = self.invoke("--plan")
         self.assertEqual(original["arguments"][1:], ["follow-state", sha(self.entries[PROFILE])])
         self.assertNotIn("public_read_stop_marker", original)
@@ -267,7 +267,12 @@ sys.exit(int(os.environ.get('TEST_QUERY_EXIT', '0')))
         self.assertEqual(original["unit"], public["unit"])
         self.assertEqual(public["arguments"][1:], ["run-public-read-snapshot", sha(self.entries[PROFILE]),
                          maximum, maximum, public["public_read_stop_marker"]])
-        for incomplete in (self.public[:2], self.public[2:], ("--stop-public-read",)):
+        combined = self.invoke("--plan", *self.public[2:])
+        self.assertEqual(original["unit"], combined["unit"])
+        self.assertEqual(combined["arguments"][1:],
+                         ["follow-state", sha(self.entries[PROFILE]), self.public[2], self.public[3],
+                          combined["public_read_stop_marker"]])
+        for incomplete in (self.public[:2], ("--stop-public-read",)):
             self.invoke(*incomplete, ok=False)
         for invalid in ("0", "-1", str(2**64), "1.5"):
             for options in ((self.public[0], invalid, *self.public[2:]), (*self.public[:3], invalid)):
@@ -276,6 +281,22 @@ sys.exit(int(os.environ.get('TEST_QUERY_EXIT', '0')))
         self.assertFalse(Path(public["public_read_stop_marker"]).exists())
         self.assertFalse(Path(original["release"]).exists())
         self.assertFalse(self.log.exists())
+
+    def test_combined_follower_reuses_credential_and_stops_with_its_exact_parameters(self):
+        plan = self.invoke()
+        owner = Path(plan["release"]).parents[1] / "client-credentials/owner-key"
+        original = owner.read_bytes()
+        self.assertIn("stop the installed follower", self.invoke(*self.public[2:], ok=False))
+        self.env["TEST_ACTIVE"] = "inactive"
+        plan = self.invoke(*self.public[2:])
+        self.assertIn('"--public-read-max-state-nodes"', self.unit.read_text())
+        self.assertEqual(owner.read_bytes(), original)
+        marker = Path(plan["public_read_stop_marker"])
+        self.env["TEST_MARKER"] = str(marker)
+        self.invoke("--stop-public-read", *self.public, ok=False)
+        self.assertFalse(marker.exists())
+        self.invoke("--stop-public-read", *self.public[2:])
+        self.assertTrue(marker.is_file())
 
     def test_same_public_unit_stops_and_resumes_with_original_credential(self):
         plan = self.invoke(*self.public)
