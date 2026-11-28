@@ -21,3 +21,11 @@ UCA opening observation UcaRegistration { request_hash: [125, 19, 186, 49, 58, 9
 UCA expired opening at exclusive upper bound 22 => OutsideValidityWindow
 Existing-store V6 activation, atomic device replacement, cold reopen and stale grant rejection verified on four validators
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1836 filtered out; finished in 33.08s
+
+V4 existing-chain compatibility run
+V4 application: four real services/DBs, native UDP grants, asset spend, future-nonce non-starvation, scoped revocation, cold recovery, unchanged-head refusals and post-restart reauthorization; no deployment or TPS claim
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1836 filtered out; finished in 62.79s
+
+ASAS login component run
+test asas_route::auth::tests::actual_mldsa_device_login_and_revocation_gate ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.64s

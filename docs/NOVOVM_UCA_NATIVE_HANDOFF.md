@@ -66,3 +66,8 @@ novovm-native-client client-config.json application-status replacement.nuap
 - V6 下重复通过 17/17 并发开户与饱和重试，高度 5 的第 0 轮索引 3 提议者暂停后，由索引 2 在第 1 轮接任。授权协议与其他协议单测 98 项、原子状态与冷恢复组件 1 项、V5/V6 激活证书边界 1 项通过。V5 审批在给定原规则下仍可验证，尝试以同一签名替换 V6 业务指纹时被拒绝。
 
 完整 V6 测试日志 SHA-256 `8487db2446df4b0e1fb6fa2c6a5390abe08a6e101799fd0b474672bac576f4b6`。提取的原始测试结果见 [换机与开户隔离记录](../artifacts/audit/native-uca-registration-20261128/replacement-observations.txt)。原链使用 `novovmctl native-business-activation` 的 `prepare`、`approve`、`assemble` 核对和审批同一主题 SHA-256。现役部署及真机登录需要各自的验收窗口。
+
+### 兼容与 ASAS 组件复验
+
+- `cargo test --locked -p novovm-node --lib actual_native_uca_application_publication_and_cold_recovery -- --ignored --nocapture --test-threads=1` 所选用例以同一测试程序直接执行，耗时 62.79 秒。原 V4 授权、资产花费、未来 nonce 不阻塞撤销、冷恢复及重新授权通过，随后沿同一测试链由 V4 切换 V6 并完成换机。保留原 V5 审批的单测覆盖与这条 V4→V6 隔离用例分别记录。
+- `cargo test --locked --target x86_64-pc-windows-msvc --release -p novovm-relay --lib --features iroh-transport,tls-transport actual_mldsa_device_login_and_revocation_gate -- --ignored --nocapture --test-threads=1` 通过，耗时 0.64 秒。使用同一 FULLMAX AOEM、真实 ML-DSA 挑战和 localhost UDP，覆盖切换前新设备无权、切换后新设备可登录、旧会话与重登被拒。授权读数由 ASAS 测试夹具提供。实际设备登录和系统解锁仍需联调方取得证据。
