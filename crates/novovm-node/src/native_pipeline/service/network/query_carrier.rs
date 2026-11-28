@@ -18,6 +18,7 @@ use novovm_network::{
     },
 };
 use novovm_protocol::native_query::{self as wire, Answer, Frame as QueryFrame, Request, Response};
+use std::collections::BTreeMap;
 
 #[cfg(test)]
 use crate::native_pipeline::service::client::operator::receipt_proof::ProofTarget;
@@ -44,44 +45,60 @@ pub(super) struct Ingress {
     pub(super) peers: Option<Arc<[Vec<u8>]>>,
 }
 
-/// The single long-lived read stream may be resumed by its authenticated
-/// transport identity even when the previous QUIC path has not closed yet.
-#[derive(Default)]
+/// Each authenticated identity may resume its read stream even when its
+/// previous QUIC path has not closed yet. The owner sets the admission limit.
 pub(super) struct QuerySlot {
-    occupant: Mutex<Option<Occupant>>,
+    occupants: Mutex<BTreeMap<Vec<u8>, Occupant>>,
+    capacity: usize,
 }
 
 struct Occupant {
-    peer: Vec<u8>,
     generation: Arc<()>,
     _lease: oneshot::Sender<()>,
 }
 
 struct Admission<'a> {
     slot: &'a QuerySlot,
+    peer: Vec<u8>,
     generation: Arc<()>,
     revoked: oneshot::Receiver<()>,
 }
 
+impl Default for QuerySlot {
+    fn default() -> Self {
+        Self::with_capacity(1)
+    }
+}
+
 impl QuerySlot {
+    pub(super) fn with_capacity(capacity: usize) -> Self {
+        Self {
+            occupants: Mutex::new(BTreeMap::new()),
+            capacity,
+        }
+    }
+
     fn enter(&self, peer: Vec<u8>) -> Result<Admission<'_>> {
         let mut active = self
-            .occupant
+            .occupants
             .lock()
             .map_err(|_| anyhow::anyhow!("carrier query slot poisoned"))?;
         ensure!(
-            active.as_ref().is_none_or(|current| current.peer == peer),
+            active.len() < self.capacity || active.contains_key(&peer),
             "carrier query slots at capacity"
         );
         let (lease, revoked) = oneshot::channel();
         let generation = Arc::new(());
-        *active = Some(Occupant {
-            peer,
-            generation: generation.clone(),
-            _lease: lease,
-        });
+        active.insert(
+            peer.clone(),
+            Occupant {
+                generation: generation.clone(),
+                _lease: lease,
+            },
+        );
         Ok(Admission {
             slot: self,
+            peer,
             generation,
             revoked,
         })
@@ -90,14 +107,47 @@ impl QuerySlot {
 
 impl Drop for Admission<'_> {
     fn drop(&mut self) {
-        if let Ok(mut active) = self.slot.occupant.lock() {
+        if let Ok(mut active) = self.slot.occupants.lock() {
             if active
-                .as_ref()
+                .get(&self.peer)
                 .is_some_and(|current| Arc::ptr_eq(&current.generation, &self.generation))
             {
-                active.take();
+                active.remove(&self.peer);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::QuerySlot;
+    use tokio::sync::oneshot::error::TryRecvError;
+
+    #[test]
+    fn query_admission_reserves_one_identity_by_default() {
+        let slots = QuerySlot::default();
+        let first = slots.enter(vec![1]).unwrap();
+        assert!(slots.enter(vec![2]).is_err());
+        drop(first);
+        assert!(slots.enter(vec![2]).is_ok());
+    }
+
+    #[test]
+    fn query_admission_reconnect_retires_only_that_identity() {
+        let slots = QuerySlot::with_capacity(2);
+        let mut first = slots.enter(vec![1]).unwrap();
+        let mut second = slots.enter(vec![2]).unwrap();
+        assert!(slots.enter(vec![3]).is_err());
+
+        let replacement = slots.enter(vec![1]).unwrap();
+        assert_eq!(first.revoked.try_recv(), Err(TryRecvError::Closed));
+        assert_eq!(second.revoked.try_recv(), Err(TryRecvError::Empty));
+        drop(first);
+        assert!(slots.enter(vec![3]).is_err());
+
+        drop(replacement);
+        assert!(slots.enter(vec![3]).is_ok());
+        assert_eq!(second.revoked.try_recv(), Err(TryRecvError::Empty));
     }
 }
 

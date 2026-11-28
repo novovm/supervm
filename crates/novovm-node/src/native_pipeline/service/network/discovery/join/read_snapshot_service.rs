@@ -180,9 +180,12 @@ fn serve_snapshot(
                     let _ = read.answer.send(snapshot.answer(&read.request.query));
                 }
             });
+            // Snapshot reads share the existing bounded worker queue. A live
+            // stream does not reserve the worker between requests.
+            let admissions = QuerySlot::with_capacity(CARRIER_CONNECTION_CEILING);
             let ingress = Ingress {
                 requests,
-                slot: Some(Arc::new(QuerySlot::default())),
+                slot: Some(Arc::new(admissions)),
                 peers: None,
             };
             let served =
