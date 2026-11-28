@@ -17,8 +17,13 @@ use read_route::{boxed_read, ReadRoute};
 pub(super) use receipt::ReceiptSearch;
 pub(crate) mod read_snapshot;
 mod state;
+mod uca_authority;
 pub use follow::{follow_and_serve_installed_state, follow_installed_state};
 use state::{StateCache, StateProgress};
+pub use uca_authority::{
+    prove_installed_uca_authority, verify_installed_uca_authority, verify_uca_authority_object,
+    UcaAuthorityReviewV1, MAX_UCA_AUTHORITY_PROOF_BYTES,
+};
 
 const MAX_HEADERS_PER_PASS: u64 = 128;
 

@@ -23,6 +23,7 @@ use anyhow::{ensure, Context, Result};
 // not as a backend-specific product API or an implicit node service.
 #[cfg(test)]
 mod receipt;
+pub mod uca_authority;
 #[cfg(feature = "iroh-transport")]
 pub(crate) mod uca_replay;
 mod wire;

@@ -1,22 +1,16 @@
 //! Application grant transitions over the original immutable native state tree.
 //! The native admission/journal owner must establish the parent and commit these
 //! effects atomically. This component is not an ingress, login or asset grant.
-use super::{record_pages, uca_identity::IdentityAccessV1};
+use super::record_pages;
 use crate::native_pipeline::state::{
     frontier::{DeclaredAccess, OwnedStateInput},
     tree::{NodeHash, StateChange},
 };
 use anyhow::{ensure, Context, Result};
 use novovm_exec::uca_application::CheckedApplicationGrantV1;
-use novovm_protocol::{
-    native_query::{
-        ApplicationGrantStateV1, ApplicationGrantViewV1, IdentityStatusV1, UcaIdentityViewV1,
-    },
-    uca_application::{
-        ApplicationGrantActionV1, ApplicationGrantIntentV1, ApplicationGrantSelectorV1,
-    },
-};
-use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use novovm_protocol::native_query::{ApplicationGrantStateV1, IdentityStatusV1};
+use novovm_protocol::uca_application::{ApplicationGrantActionV1, ApplicationGrantIntentV1};
 
 mod batch;
 pub(crate) use batch::application_command_id;
@@ -26,102 +20,11 @@ pub use batch::{
     ApplicationGrantPlanV1, ExecutedApplicationGrantBatchV1, APPLICATION_SEMANTIC_VERSION_V1,
 };
 
-const GRANT_BYTES: usize = 256;
+pub(crate) mod state;
+pub use state::{ApplicationGrantAccessV1, ApplicationGrantObservationV1};
+use state::{GrantRecordV1, GRANT_BYTES};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct GrantRecordV1 {
-    grant_id: NodeHash,
-    issuer_key_ref: NodeHash,
-    revision: u64,
-    revoked: bool,
-    not_before_height: u64,
-    expires_at_height: u64,
-}
-
-pub struct ApplicationGrantAccessV1 {
-    selector: ApplicationGrantSelectorV1,
-    identity: IdentityAccessV1,
-    prefix: Vec<u8>,
-    declarations: Vec<DeclaredAccess>,
-}
 impl ApplicationGrantAccessV1 {
-    pub fn new(selector: ApplicationGrantSelectorV1) -> Result<Self> {
-        let grant_id = selector.grant_id()?;
-        let prefix = [b"novovm/uca/application-grant/v1/".as_slice(), &grant_id].concat();
-        let identity = IdentityAccessV1::new(
-            selector.chain_id,
-            &selector.genesis,
-            selector.identity.as_str(),
-        )?;
-        let mut declarations = identity.declarations().to_vec();
-        declarations.extend(record_pages::declarations(&prefix, GRANT_BYTES, true)?);
-        Ok(Self {
-            selector,
-            identity,
-            prefix,
-            declarations,
-        })
-    }
-    pub fn declarations(&self) -> &[DeclaredAccess] {
-        &self.declarations
-    }
-    pub fn read(
-        &self,
-        input: &OwnedStateInput,
-        parent_root: NodeHash,
-        height: u64,
-    ) -> Result<ApplicationGrantObservationV1> {
-        self.read_under_rules(input, parent_root, height, false)
-    }
-
-    pub(crate) fn read_under_rules(
-        &self,
-        input: &OwnedStateInput,
-        parent_root: NodeHash,
-        height: u64,
-        native_registration: bool,
-    ) -> Result<ApplicationGrantObservationV1> {
-        let identity = self.identity.read(input, parent_root, height)?;
-        if identity.is_some() {
-            self.identity
-                .require_original_binding(input, native_registration)?;
-        }
-        let keys: Vec<_> = self.declarations[self.identity.declarations().len()..]
-            .iter()
-            .map(|d| d.key.clone())
-            .collect();
-        let values = input.read_many(&keys)?;
-        let record = if values[0].is_none() {
-            ensure!(
-                values.iter().all(Option::is_none),
-                "orphan application grant page"
-            );
-            None
-        } else {
-            let bytes = record_pages::read_with(|key| input.read(key), &self.prefix, GRANT_BYTES)?;
-            let (record, tail): (GrantRecordV1, _) = postcard::take_from_bytes(&bytes)?;
-            ensure!(
-                tail.is_empty() && postcard::to_allocvec(&record)? == bytes,
-                "noncanonical application grant record"
-            );
-            ensure!(
-                record.grant_id == self.selector.grant_id()?
-                    && record.revision > 0
-                    && (record.revision < u64::MAX || record.revoked)
-                    && record.issuer_key_ref != [0; 32]
-                    && record.expires_at_height > record.not_before_height,
-                "invalid application grant record"
-            );
-            Some(record)
-        };
-        Ok(ApplicationGrantObservationV1 {
-            selector: self.selector.clone(),
-            parent_root,
-            height,
-            identity,
-            record,
-        })
-    }
     /// Compiles effects only. Never publish without the original admission,
     /// immutable-parent and atomic-commit owners, or reuse after the parent changes.
     pub fn transition(
@@ -234,85 +137,6 @@ impl ApplicationGrantAccessV1 {
             not_before_height,
             expires_at_height,
         })
-    }
-}
-
-pub struct ApplicationGrantObservationV1 {
-    selector: ApplicationGrantSelectorV1,
-    parent_root: NodeHash,
-    height: u64,
-    identity: Option<UcaIdentityViewV1>,
-    record: Option<GrantRecordV1>,
-}
-impl ApplicationGrantObservationV1 {
-    /// Retains revoked/expired/inactive metadata instead of disguising it as
-    /// absence. This projection cannot certify device possession or finality.
-    pub fn query_state(&self, height: u64) -> Result<ApplicationGrantStateV1> {
-        ensure!(
-            self.height == height,
-            "application observation height mismatch"
-        );
-        let Some(identity) = &self.identity else {
-            return Ok(ApplicationGrantStateV1::IdentityMissing {
-                state_root: self.parent_root,
-                height,
-            });
-        };
-        ensure!(
-            identity.height == height && identity.state_root == self.parent_root,
-            "application observation height/root mismatch"
-        );
-        Ok(match &self.record {
-            None => ApplicationGrantStateV1::Missing {
-                state_root: self.parent_root,
-                height,
-            },
-            Some(record) => ApplicationGrantStateV1::Present(ApplicationGrantViewV1 {
-                state_root: self.parent_root,
-                height,
-                revision: record.revision,
-                issuer_key_ref: record.issuer_key_ref,
-                identity_key_ref: identity.primary_key_ref,
-                identity_status: identity.status,
-                revoked: record.revoked,
-                not_before_height: record.not_before_height,
-                expires_at_height: record.expires_at_height,
-            }),
-        })
-    }
-    fn current_identity(&self, parent_root: NodeHash) -> Result<&UcaIdentityViewV1> {
-        ensure!(
-            parent_root != [0; 32] && parent_root == self.parent_root,
-            "application parent mismatch"
-        );
-        let identity = self
-            .identity
-            .as_ref()
-            .context("registered UCA identity missing")?;
-        ensure!(
-            identity.status == IdentityStatusV1::Active && identity.state_root == parent_root,
-            "UCA identity unavailable or inactive"
-        );
-        Ok(identity)
-    }
-    pub fn revision(&self) -> u64 {
-        self.record.as_ref().map_or(0, |r| r.revision)
-    }
-    /// State policy check, NOT proof of key possession or trusted finality.
-    /// Callers still need a fresh session-bound device challenge and trusted head.
-    pub fn check_at_root(&self, parent_root: NodeHash, height: u64, revision: u64) -> Result<()> {
-        let identity = self.current_identity(parent_root)?;
-        let grant = self.record.as_ref().context("application grant missing")?;
-        ensure!(
-            !grant.revoked
-                && grant.revision == revision
-                && grant.issuer_key_ref == identity.primary_key_ref
-                && self.selector.device != identity.primary_key_ref
-                && grant.not_before_height <= height
-                && height < grant.expires_at_height,
-            "application grant revoked, stale, expired or not yet valid"
-        );
-        Ok(())
     }
 }
 

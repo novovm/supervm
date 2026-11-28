@@ -5,7 +5,7 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | submit-registration <signed.nuir> | registration-status <signed.nuir> | submit-application <signed.nuap> | application-status <signed.nuap> | consensus-proposal <height> <round> <tx-hash> [--legacy] | activation-anchor <height> <output> | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover [profile-sha256] | discover-verified-receipt <tx-hash> [profile-sha256 [--existing-identity]] [--height N | --lookup-height] [--export-proof FILE] | verify-receipt-proof <profile-sha256> <tx-hash> <height> <proof> | check-installed-profile <profile-sha256> | sync-chain | sync-state | follow-state [profile-sha256] | follow-state <profile-sha256> --public-read-max-state-nodes <limit> [absolute-stop-file] | activation-parent <height> <profile-sha256> <output> | verify-uca-execution <profile-sha256> <archive.bin> | serve-read-snapshot or serve-public-read-snapshot <profile-sha256> <height> <max-state-nodes> <serve-seconds> [verify-seconds=300] | run-public-read-snapshot <profile-sha256> <height> <max-state-nodes> [absolute-stop-file]\n       novovm-native-client <bootstrap-config.json> run-discovery-bootstrap <config-sha256>";
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | submit-registration <signed.nuir> | registration-status <signed.nuir> | submit-application <signed.nuap> | application-status <signed.nuap> | consensus-proposal <height> <round> <tx-hash> [--legacy] | activation-anchor <height> <output> | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover [profile-sha256] | discover-verified-receipt <tx-hash> [profile-sha256 [--existing-identity]] [--height N | --lookup-height] [--export-proof FILE] | verify-receipt-proof <profile-sha256> <tx-hash> <height> <proof> | check-installed-profile <profile-sha256> | sync-chain | sync-state | follow-state [profile-sha256] | follow-state <profile-sha256> --public-read-max-state-nodes <limit> [absolute-stop-file] | activation-parent <height> <profile-sha256> <output> | verify-uca-execution <profile-sha256> <archive.bin> | prove-uca-authority <profile-sha256> <review.json> <review-sha256> <guest.bin> <output> | verify-uca-authority <profile-sha256> <review.json> <review-sha256> <proof> | serve-read-snapshot or serve-public-read-snapshot <profile-sha256> <height> <max-state-nodes> <serve-seconds> [verify-seconds=300] | run-public-read-snapshot <profile-sha256> <height> <max-state-nodes> [absolute-stop-file]\n       novovm-native-client <bootstrap-config.json> run-discovery-bootstrap <config-sha256>";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
     if action == "--asas-authority" {
@@ -23,7 +23,9 @@ fn main() -> Result<()> {
         #[cfg(all(any(windows, target_os = "linux"), feature = "iroh-transport"))]
         return novovm_node::native_pipeline::service::network::run_discovery_bootstrap(
             config,
-            args[2].to_str().context("bootstrap configuration SHA-256")?,
+            args[2]
+                .to_str()
+                .context("bootstrap configuration SHA-256")?,
         );
         #[cfg(not(all(any(windows, target_os = "linux"), feature = "iroh-transport")))]
         anyhow::bail!("discovery bootstrap requires protected Windows or Linux custody and the NOVONET carrier");
@@ -120,6 +122,33 @@ fn main() -> Result<()> {
     } else if matches!(action, "sync-chain" | "sync-state") {
         ensure!(args.len() == 2, "{USAGE}");
         sync_chain(config, action == "sync-state")?
+    } else if matches!(action, "prove-uca-authority" | "verify-uca-authority") {
+        let prove = action == "prove-uca-authority";
+        ensure!(args.len() == 6 + usize::from(prove), "{USAGE}");
+        #[cfg(feature = "iroh-transport")]
+        {
+            use novovm_node::native_pipeline::service::network::{
+                prove_installed_uca_authority, verify_installed_uca_authority,
+            };
+            let profile_pin = args[2].to_str().context("profile SHA-256")?;
+            let review = Path::new(&args[3]);
+            let review_pin = args[4].to_str().context("UCA review SHA-256")?;
+            let input = Path::new(&args[5]);
+            if prove {
+                prove_installed_uca_authority(
+                    config,
+                    profile_pin,
+                    review,
+                    review_pin,
+                    input,
+                    Path::new(&args[6]),
+                )?
+            } else {
+                verify_installed_uca_authority(config, profile_pin, review, review_pin, input)?
+            }
+        }
+        #[cfg(not(feature = "iroh-transport"))]
+        anyhow::bail!("portable UCA authority requires installed chain verification");
     } else if action == "verify-uca-execution" {
         ensure!(args.len() == 4, "{USAGE}");
         #[cfg(feature = "iroh-transport")]
@@ -147,7 +176,10 @@ fn main() -> Result<()> {
                 config,
                 args[2].to_str().context("non-UTF8 profile pin")?,
                 args[3].to_str().context("non-UTF8 transaction hash")?,
-                args[4].to_str().context("non-UTF8 receipt height")?.parse()?,
+                args[4]
+                    .to_str()
+                    .context("non-UTF8 receipt height")?
+                    .parse()?,
                 Path::new(&args[5]),
             )?
         }
@@ -254,8 +286,12 @@ fn discovered_receipt(
     };
     if let Some(output) = output {
         export_discovered_receipt_proof(
-            config, hash, pin.context("proof export requires a pinned profile")?,
-            location, existing.is_some(), output,
+            config,
+            hash,
+            pin.context("proof export requires a pinned profile")?,
+            location,
+            existing.is_some(),
+            output,
         )
     } else if existing.is_some() {
         discover_existing_verified_receipt_at(

@@ -29,19 +29,21 @@ mod diagnostic;
 mod discovery;
 #[cfg(any(windows, target_os = "linux"))]
 mod discovery_bootstrap;
-#[cfg(any(windows, target_os = "linux"))]
-pub use discovery_bootstrap::run_discovery_bootstrap;
 #[cfg(test)]
 pub(in crate::native_pipeline::service) use discovery::test_slow_cached_receipt;
 pub use discovery::{
     check_installed_profile, discover_existing_verified_receipt_at, discover_installed,
     discover_installed_from_profile, discover_verified_receipt, discover_verified_receipt_at,
-    discover_verified_receipt_from_profile, export_activation_parent, export_discovered_receipt_proof,
-    follow_and_serve_installed_state, follow_installed_state,
-    run_installed_public_read_snapshot, serve_installed_public_read_snapshot,
-    serve_installed_read_snapshot, sync_installed_chain, sync_installed_state,
-    verify_installed_receipt_proof, verify_installed_uca_execution, ReceiptLocation,
+    discover_verified_receipt_from_profile, export_activation_parent,
+    export_discovered_receipt_proof, follow_and_serve_installed_state, follow_installed_state,
+    prove_installed_uca_authority, run_installed_public_read_snapshot,
+    serve_installed_public_read_snapshot, serve_installed_read_snapshot, sync_installed_chain,
+    sync_installed_state, verify_installed_receipt_proof, verify_installed_uca_authority,
+    verify_installed_uca_execution, verify_uca_authority_object, ReceiptLocation,
+    UcaAuthorityReviewV1, MAX_UCA_AUTHORITY_PROOF_BYTES,
 };
+#[cfg(any(windows, target_os = "linux"))]
+pub use discovery_bootstrap::run_discovery_bootstrap;
 mod observation;
 mod probe;
 mod query_carrier;

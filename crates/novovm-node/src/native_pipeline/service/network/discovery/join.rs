@@ -25,7 +25,9 @@ mod chain_sync;
 mod read_snapshot_service;
 pub use chain_sync::{
     export_activation_parent, follow_and_serve_installed_state, follow_installed_state,
-    sync_installed_chain, sync_installed_state, verify_installed_uca_execution,
+    prove_installed_uca_authority, sync_installed_chain, sync_installed_state,
+    verify_installed_uca_authority, verify_installed_uca_execution, verify_uca_authority_object,
+    UcaAuthorityReviewV1, MAX_UCA_AUTHORITY_PROOF_BYTES,
 };
 pub use read_snapshot_service::{
     run_installed_public_read_snapshot, serve_installed_public_read_snapshot,

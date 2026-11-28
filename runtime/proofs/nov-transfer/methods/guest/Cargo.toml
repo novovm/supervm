@@ -8,6 +8,12 @@ publish = false
 
 [dependencies]
 risc0-zkvm = { version = "=2.3.2", default-features = false, features = ["std"] }
+anyhow = "1"
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+novovm-protocol = { path = "../../../../../crates/novovm-protocol" }
+novovm-adapter-api = { path = "../../../../../crates/novovm-adapter-api" }
 novovm-host = { path = "../../../../novovm-host", default-features = false }
 
 [patch.crates-io]

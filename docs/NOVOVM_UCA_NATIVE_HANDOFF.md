@@ -45,7 +45,7 @@ NOVOCHAT 首装登录和注册、ASAS 端的授权接入、ACODE 用户端接入
 
 ## 终局证明与发布条件
 
-生产契约沿用 [AOEM 证明宿主](../docs_CN/AOEM-FFI/SUPERVM-AOEM-PROOF-ENGINE-HOST-INTEGRATION-V1-2026-05-23.md) 和原链终局证明路径。当前源码未交付 UCA 注册及应用授权的便携证明接口。AOEM Windows 候选源版本 89414f92 已包含 [停用旧私有成员证明的修复](https://github.com/AOEM-Core/AOEM/commit/1377cd1e7c1d43a4bf81cb16a169319772cf3e84)。UCA 必须使用与原生 SHA-256 Patricia 状态承诺及授权规则一致的可独立验证证明关系。以下是接入必须满足的条件。
+生产契约沿用 [AOEM 证明宿主](../docs_CN/AOEM-FFI/SUPERVM-AOEM-PROOF-ENGINE-HOST-INTEGRATION-V1-2026-05-23.md) 和原链终局证明路径。当前源码已接入 UCA 注册和应用授权的便携证明入口，实际证明及客户端端到端验收见下节。AOEM Windows 候选源版本 89414f92 已包含 [停用旧私有成员证明的修复](https://github.com/AOEM-Core/AOEM/commit/1377cd1e7c1d43a4bf81cb16a169319772cf3e84)。UCA 必须使用与原生 SHA-256 Patricia 状态承诺及授权规则一致的可独立验证证明关系。以下是接入必须满足的条件。
 
 1. L2 在原 UCA 执行和状态承诺上生成证明。注册证明至少绑定被验证的链域、终局状态根和所需的身份声明。设备授权证明还必须约束授权用途、设备持钥引用、代次、有效窗口、撤销和身份有效状态。应用选择器的公开字段由所需的披露策略决定。需要隐藏的身份或授权数据留作见证，生产端不得通过返回原始身份记录或其他状态叶替代隐私证明。
 2. L1 最终性验证复用原链信任锚、有效验证者集合、区块头和最终性证书。客户端核验得到的状态根必须与应用证明绑定的根完全一致。证书须沿已有链规则验证。取证节点、转发节点和挑战发起方均可更换。
@@ -53,6 +53,24 @@ NOVOCHAT 首装登录和注册、ASAS 端的授权接入、ACODE 用户端接入
 4. 离线可验证证据在锚定高度的有效性。登录或续期还要满足本地信任策略规定的新鲜度并保持已验终局高度不回退。一旦无法取得足够新的独立证据，就暂停要求当前授权的操作。已下载的旧证明不能判断其后发生的撤销。
 5. 发布测试须用实际 AOEM 和原链隔离验证：同根证明可从不同提供者取得并离线验真，注册、授权、撤销和换机分别有可复核结果。使用真实客户端验收新身份注册、已有身份登录、换机及旧设备拒绝。并发吞吐单独按稳定负载统计终局成功量、延迟、背压与故障恢复。现行每区块一笔注册与 16 个本地在途槽是当前实现约束，前述隔离结果用于验证正确性和恢复。
 
+
+## UCA 便携证明接口
+
+`novovm-native-client` 从原 NOVONET 同步所得的客户端头和状态节点缓存生成 UCA 证明。证明对象采用 `NVUCAP01` 格式，内容为一个原链终局头和一个 AOEM `AORCP002` 回执。RISC0 guest 复用主线身份和授权读取、Patricia SHA-256 路径核验及原授权规则，回执公开输出只绑定语句摘要。身份记录和状态见证留在证明端。
+
+证明请求由依赖方构造并保管，含 `height`、`max_age_ms`、经审核构建的八个 `image_id` 字和 `claim`。注册语句 `Registration` 接收自己的原始 `UcaRegistrationIntentV1`。它证明该签名意图的摘要对应当前有效的原生注册身份，注册签名文件 SHA-256 仍用于提交回执索引。设备授权语句 `DeviceGrant` 接收完整 `selector` 和正数 `revision`，证明该授权在选定终局根上有效。设备签名、公钥引用及会话挑战由各应用另行验证。
+
+```text
+novovm-native-client <installed-profile.json> prove-uca-authority <profile-sha256> <review.json> <review-sha256> <trusted-guest.bin> <proof.nvucap>
+novovm-native-client <installed-profile.json> verify-uca-authority <profile-sha256> <review.json> <review-sha256> <proof.nvucap>
+```
+
+- 生成端先用现有 `sync-state` 建立本机缓存。验证端只需要已核验的前序头，跨高度的既有头缺口由 `sync-chain` 补齐。可从不同服务取得这些内容，供给端的查询响应不建立 UCA 授权。
+- 应用可以把原样证明对象交给现有应用载体。收到后调用 `verify_uca_authority_object`，并按 `MAX_UCA_AUTHORITY_PROOF_BYTES` 限制对象大小。路由、接收顺序和发送者身份不进入证明信任根。NOVOCHAT、ASAS、ACODE 的载体接线和多端收件仍须分别验收。
+- 验证端按自身固定的链域、验证者和父锚验证终局头，再用自身预期语句和 image ID 核验 AOEM 回执。它拒绝过期或未来的块时间、超出本地新鲜度窗口的头、低于本地已知终局高度的证明，以及错根、错域、篡改的回执。验证无需联网、状态见证、私钥或 guest 可执行文件。离线期间发生的撤销须通过新的可信终局头发现。
+- 隔离环境通过审核的 guest 构建与实际 AOEM 证明后才可签收。RISC0 Composite 回执的隐私边界沿用现有 [RISC0 安全模型与 NOV 证明说明](../runtime/proofs/nov-transfer/README.md#精确范围)。各目标平台的实际后端、程序 ID、回执大小、时延和撤销策略须在启用正式登录前验证。当前 Windows FULLMAX 的便携 RISC0 后端和手机离线验真仍待资格验证。
+
+2026-11-29 Windows 隔离结果。原四验证者用真实 ML-DSA-65 终局头认证高度 2 的注册根和高度 4 的换机根。原生证明关系接受获胜注册意图和新设备授权，拒绝冲突意图、撤销设备、错误根、截断和篡改的见证。定向用例通过，运行 31.95 秒。Windows Client 构建及命令入口检查通过。同期 AOEM FULLMAX DLL 的便携验证入口返回后端不可用（-5），本轮这两条终局关系的验真结果不包含实际 AOEM 回执。
 
 ## 原链激活前置
 

@@ -5,13 +5,19 @@
 //! identity associations cannot confer authority. Root trust belongs to the native
 //! candidate/journal owner. This immutable view is NOT a spend permit: same-batch
 //! nonce/budget consumption must be compiled into the economic effect plan.
-use super::{nov_transfer_batch, quoted_transfer::Account, record_pages};
+use super::{
+    nov_transfer_batch,
+    quoted_transfer::Account,
+    record_pages,
+    uca_identity::identity_prefix,
+    uca_state_domain::{domain, valid_id},
+};
 use crate::native_pipeline::state::frontier::{DeclaredAccess, OwnedStateInput};
 use crate::native_pipeline::state::tree::{NodeHash, StateChange, MAX_BATCH_READ_KEYS};
 use anyhow::{ensure, Context, Result};
 use novovm_adapter_api::uca_spend_policy::{SuppliedAssetSpendGrantV2, SuppliedAssetSpendStateV2};
 use novovm_exec::uca_spend::SignatureCheckedAssetSpendV3;
-use novovm_protocol::uca_spend::{AssetSpendIntentV3, MAX_UCA_ID_BYTES};
+use novovm_protocol::uca_spend::AssetSpendIntentV3;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -19,7 +25,6 @@ use std::collections::BTreeMap;
 // in a grant; its reference is matched to the actually checked signature.
 const ACCOUNT_BYTES: usize = 256;
 const GRANT_BYTES: usize = 512;
-const DOMAIN: &[u8] = b"novovm/asset-spend-state/v2/";
 
 /// Compact authority of one concrete balance account, not an identity record.
 /// Identity status/association changes do not mutate these permissions.
@@ -32,18 +37,6 @@ pub struct AssetAccountAuthorityV2 {
     pub current_spend_epoch: u64,
     pub management_key_ref: NodeHash,
     pub recovery_key_ref: Option<NodeHash>,
-}
-
-fn valid_id(id: &str) -> Result<()> {
-    ensure!(
-        !id.is_empty()
-            && id.len() <= MAX_UCA_ID_BYTES
-            && id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b)),
-        "invalid UCA state identity"
-    );
-    Ok(())
 }
 
 impl AssetAccountAuthorityV2 {
@@ -60,11 +53,6 @@ impl AssetAccountAuthorityV2 {
         );
         Ok(())
     }
-}
-
-fn domain(chain: u64, genesis: &NodeHash, kind: &[u8]) -> Result<Vec<u8>> {
-    ensure!(chain != 0 && *genesis != [0; 32], "empty UCA state domain");
-    Ok([DOMAIN, &chain.to_be_bytes(), genesis, kind].concat())
 }
 
 fn account_prefix(chain: u64, genesis: &NodeHash, account: &Account) -> Result<Vec<u8>> {
@@ -149,14 +137,6 @@ pub fn identity_record_changes(
     );
     let prefix = identity_prefix(chain, genesis, &identity.uca_id)?;
     record_pages::record_changes(&prefix, &postcard::to_allocvec(identity)?, 8192)
-}
-
-pub(super) fn identity_prefix(chain: u64, genesis: &NodeHash, identity: &str) -> Result<Vec<u8>> {
-    valid_id(identity)?;
-    let mut prefix = domain(chain, genesis, b"/identity/")?;
-    prefix.push(identity.len() as u8);
-    prefix.extend_from_slice(identity.as_bytes());
-    Ok(prefix)
 }
 
 pub(crate) fn account_write_declarations(

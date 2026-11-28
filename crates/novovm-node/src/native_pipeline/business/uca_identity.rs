@@ -1,6 +1,9 @@
 //! Read the original identity namespace at one captured published root.
 //! This observes registered identity state, not app grants or spending rights.
-use super::{record_pages, uca_spend_state::identity_prefix};
+use super::{
+    record_pages,
+    uca_state_domain::{domain, valid_id},
+};
 use crate::native_pipeline::state::{
     frontier::{DeclaredAccess, OwnedStateInput},
     tree::NodeHash,
@@ -8,9 +11,17 @@ use crate::native_pipeline::state::{
 use anyhow::{ensure, Context, Result};
 use novovm_adapter_api::{
     uca_key_binding::derive_primary_key_ref_from_binding_v1,
-    unified_account::{UcaAccount, UcaKeyAlgo, UcaStatus},
+    unified_account::{UcaAccount, UcaKeyAlgo, UcaKeyProofType, UcaStatus},
 };
 use novovm_protocol::native_query::{IdentityStatusV1, UcaIdentityViewV1};
+
+pub(super) fn identity_prefix(chain: u64, genesis: &NodeHash, identity: &str) -> Result<Vec<u8>> {
+    valid_id(identity)?;
+    let mut prefix = domain(chain, genesis, b"/identity/")?;
+    prefix.push(identity.len() as u8);
+    prefix.extend_from_slice(identity.as_bytes());
+    Ok(prefix)
+}
 
 pub(crate) struct IdentityAccessV1 {
     identity: String,
@@ -27,7 +38,24 @@ impl IdentityAccessV1 {
         input: &OwnedStateInput,
         native_registration: bool,
     ) -> Result<()> {
-        use novovm_adapter_api::unified_account::UcaKeyProofType;
+        self.original_binding(input, native_registration)
+            .map(|_| ())
+    }
+
+    pub(crate) fn registration_intent_digest(&self, input: &OwnedStateInput) -> Result<NodeHash> {
+        let binding = self.original_binding(input, true)?;
+        ensure!(
+            binding.proof_type == UcaKeyProofType::NativeRegistrationV1,
+            "UCA was not created by native registration"
+        );
+        Ok(binding.proof_payload.as_slice().try_into()?)
+    }
+
+    fn original_binding(
+        &self,
+        input: &OwnedStateInput,
+        native_registration: bool,
+    ) -> Result<novovm_adapter_api::unified_account::UcaPrimaryKeyBinding> {
         let bytes = record_pages::read_with(|key| input.read(key), &self.prefix, 8192)?;
         let record: UcaAccount = postcard::from_bytes(&bytes)?;
         let binding = record
@@ -49,9 +77,9 @@ impl IdentityAccessV1 {
         };
         ensure!(
             original && binding.proof_payload.len() == 32,
-            "application authority requires an original binding under the active rules"
+            "UCA authority requires an original binding under the active rules"
         );
-        Ok(())
+        Ok(binding)
     }
     pub(crate) fn new(chain: u64, genesis: &NodeHash, identity: &str) -> Result<Self> {
         let prefix = identity_prefix(chain, genesis, identity)?;

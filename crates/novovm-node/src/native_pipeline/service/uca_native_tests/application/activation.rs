@@ -8,6 +8,8 @@ use novovm_protocol::{
     native_query::{ApplicationCommandStatusV1, IdentityStateV1, RegistrationStatusV1},
     uca_registration::{SignedUcaRegistrationV1, UcaRegistrationIntentV1, REGISTRATION_CONTEXT_V1},
 };
+#[cfg(feature = "iroh-transport")]
+mod authority_proof;
 mod concurrent;
 
 fn application_command_status(
@@ -198,6 +200,32 @@ pub(super) fn run(
         RegistrationStatusV1::IdentityAlreadyRegistered
     )));
     println!("UCA same identity: {registration_queries:?} => {contests:?}");
+    #[cfg(feature = "iroh-transport")]
+    let authority_verifier = {
+        use crate::native_pipeline::{
+            proof::uca_authority::UcaAuthorityClaimV1,
+            service::client::operator::receipt_proof::FinalityVerifier,
+        };
+        let domain = MessageDomain {
+            chain_id: boundary.chain_id,
+            genesis: boundary.genesis_config_commitment,
+            protocol: boundary.protocol_commitment,
+            validators: nodes[0].node.validators.clone(),
+        };
+        let verifier = FinalityVerifier::new(&domain, client_identity.clone());
+        let intents = [&proof.intent, &competing.intent];
+        let selected = usize::from(contests[0] != winner);
+        authority_proof::check_certified(
+            &mut nodes,
+            &mut clients[ingress],
+            &verifier,
+            parent,
+            UcaAuthorityClaimV1::Registration(intents[selected].clone()),
+            UcaAuthorityClaimV1::Registration(intents[1 - selected].clone()),
+            &format!("registration-{}", boundary.height),
+        )?;
+        verifier
+    };
     let selector = Query::UcaIdentity {
         chain_id: boundary.chain_id,
         genesis: boundary.genesis_config_commitment,
@@ -262,6 +290,8 @@ pub(super) fn run(
         assert_eq!(grant.not_before_height, grant_height);
         assert_eq!(grant.expires_at_height, grant_height + 20);
     }
+    #[cfg(feature = "iroh-transport")]
+    let grant_parent = nodes[0].node.controller.parent();
     let revoke_height = grant_height + 1;
     let replacement_intent = ApplicationGrantIntentV1 {
         expected_revision: 1,
@@ -316,6 +346,25 @@ pub(super) fn run(
     );
     let revoked = heads(&mut nodes, &mut clients, revoke_height, 0)?;
     assert_ne!(revoked[0].state_root, published[0].state_root);
+    #[cfg(feature = "iroh-transport")]
+    {
+        use crate::native_pipeline::proof::uca_authority::UcaAuthorityClaimV1;
+        authority_proof::check_certified(
+            &mut nodes,
+            &mut clients[ingress],
+            &authority_verifier,
+            grant_parent,
+            UcaAuthorityClaimV1::DeviceGrant {
+                selector: successor.clone(),
+                revision: 1,
+            },
+            UcaAuthorityClaimV1::DeviceGrant {
+                selector: selector.clone(),
+                revision: 1,
+            },
+            &format!("replacement-{}", revoke_height),
+        )?;
+    }
     for grant in grant_views(&mut nodes, &mut clients, &selector, revoke_height)? {
         assert_eq!(grant.revision, 2);
         assert!(grant.revoked);

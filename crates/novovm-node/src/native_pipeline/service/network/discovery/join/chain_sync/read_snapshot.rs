@@ -385,10 +385,24 @@ impl SnapshotRefresh {
     }
 }
 
-struct SnapshotNodes {
+pub(super) struct SnapshotNodes {
     directory: PathBuf,
     verify_deadline: Option<Instant>,
     cancelled: Option<Arc<AtomicBool>>,
+}
+
+impl SnapshotNodes {
+    pub(super) fn proof_source(directory: PathBuf) -> Result<Self> {
+        ensure!(
+            plain_directory(&directory),
+            "UCA proof state cache missing or linked"
+        );
+        Ok(Self {
+            directory,
+            verify_deadline: None,
+            cancelled: None,
+        })
+    }
 }
 
 impl StateNodeReader for SnapshotNodes {
@@ -431,7 +445,7 @@ fn is_link(metadata: &fs::Metadata) -> bool {
     metadata.file_type().is_symlink()
 }
 
-fn read_cache_file(path: &Path, max: usize) -> io::Result<Vec<u8>> {
+pub(super) fn read_cache_file(path: &Path, max: usize) -> io::Result<Vec<u8>> {
     let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid snapshot cache file");
     // Reject links and special files before opening, and check the opened handle again.
     let metadata = fs::symlink_metadata(path)?;

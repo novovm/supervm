@@ -13,7 +13,9 @@ use novovm_adapter_api::{
 use novovm_exec::{pq_signature::AoemMldsaParameterSet, AoemExecFacade, AoemExecOpenOptions};
 use novovm_protocol::{
     native_query::UcaIdentityIdV1,
-    uca_application::{ApplicationGrantIntentV1, SignedApplicationGrantV1},
+    uca_application::{
+        ApplicationGrantIntentV1, ApplicationGrantSelectorV1, SignedApplicationGrantV1,
+    },
 };
 use std::collections::BTreeMap;
 

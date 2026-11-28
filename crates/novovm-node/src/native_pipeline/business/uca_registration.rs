@@ -1,7 +1,6 @@
 //! Prepare the initial identity effect from the original captured state.
 use super::{
-    record_pages,
-    uca_spend_state::{identity_prefix, identity_record_changes},
+    record_pages, uca_identity::identity_prefix, uca_spend_state::identity_record_changes,
 };
 use crate::native_pipeline::{
     execution::plan::{
