@@ -5,7 +5,7 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | submit-registration <signed.nuir> | submit-application <signed.nuap> | consensus-proposal <height> <round> <tx-hash> [--legacy] | activation-anchor <height> <output> | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover [profile-sha256] | discover-verified-receipt <tx-hash> [profile-sha256 [--existing-identity]] [--height N | --lookup-height] | check-installed-profile <profile-sha256> | sync-chain | sync-state | follow-state [profile-sha256] | follow-state <profile-sha256> --public-read-max-state-nodes <limit> [absolute-stop-file] | activation-parent <height> <profile-sha256> <output> | verify-uca-execution <profile-sha256> <archive.bin> | serve-read-snapshot or serve-public-read-snapshot <profile-sha256> <height> <max-state-nodes> <serve-seconds> [verify-seconds=300] | run-public-read-snapshot <profile-sha256> <height> <max-state-nodes> [absolute-stop-file]\n       novovm-native-client <bootstrap-config.json> run-discovery-bootstrap <config-sha256>";
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | submit-registration <signed.nuir> | submit-application <signed.nuap> | consensus-proposal <height> <round> <tx-hash> [--legacy] | activation-anchor <height> <output> | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover [profile-sha256] | discover-verified-receipt <tx-hash> [profile-sha256 [--existing-identity]] [--height N | --lookup-height] [--export-proof FILE] | verify-receipt-proof <profile-sha256> <tx-hash> <height> <proof> | check-installed-profile <profile-sha256> | sync-chain | sync-state | follow-state [profile-sha256] | follow-state <profile-sha256> --public-read-max-state-nodes <limit> [absolute-stop-file] | activation-parent <height> <profile-sha256> <output> | verify-uca-execution <profile-sha256> <archive.bin> | serve-read-snapshot or serve-public-read-snapshot <profile-sha256> <height> <max-state-nodes> <serve-seconds> [verify-seconds=300] | run-public-read-snapshot <profile-sha256> <height> <max-state-nodes> [absolute-stop-file]\n       novovm-native-client <bootstrap-config.json> run-discovery-bootstrap <config-sha256>";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
     if action == "--asas-authority" {
@@ -133,12 +133,26 @@ fn main() -> Result<()> {
         #[cfg(not(feature = "iroh-transport"))]
         anyhow::bail!("UCA execution replay requires installed chain verification");
     } else if action == "discover-verified-receipt" {
-        ensure!((3..=7).contains(&args.len()), "{USAGE}");
+        ensure!((3..=9).contains(&args.len()), "{USAGE}");
         discovered_receipt(
             config,
             args[2].to_str().context("non-UTF8 transaction hash")?,
             &args[3..],
         )?
+    } else if action == "verify-receipt-proof" {
+        ensure!(args.len() == 6, "{USAGE}");
+        #[cfg(feature = "iroh-transport")]
+        {
+            novovm_node::native_pipeline::service::network::verify_installed_receipt_proof(
+                config,
+                args[2].to_str().context("non-UTF8 profile pin")?,
+                args[3].to_str().context("non-UTF8 transaction hash")?,
+                args[4].to_str().context("non-UTF8 receipt height")?.parse()?,
+                Path::new(&args[5]),
+            )?
+        }
+        #[cfg(not(feature = "iroh-transport"))]
+        anyhow::bail!("offline receipt proof requires installed chain verification");
     } else if action == "activation-parent" {
         ensure!(args.len() == 5, "{USAGE}");
         #[cfg(feature = "iroh-transport")]
@@ -207,7 +221,14 @@ fn discovered_receipt(
     options: &[std::ffi::OsString],
 ) -> Result<serde_json::Value> {
     use novovm_node::native_pipeline::service::network::{
-        discover_existing_verified_receipt_at, discover_verified_receipt_at, ReceiptLocation,
+        discover_existing_verified_receipt_at, discover_verified_receipt_at,
+        export_discovered_receipt_proof, ReceiptLocation,
+    };
+    let (options, output) = match options {
+        [selection @ .., flag, output] if flag == "--export-proof" => {
+            (selection, Some(Path::new(output)))
+        }
+        _ => (options, None),
     };
     let options = options
         .iter()
@@ -231,7 +252,12 @@ fn discovered_receipt(
             "expected [profile-sha256 [--existing-identity]] [--height N | --lookup-height]"
         ),
     };
-    if existing.is_some() {
+    if let Some(output) = output {
+        export_discovered_receipt_proof(
+            config, hash, pin.context("proof export requires a pinned profile")?,
+            location, existing.is_some(), output,
+        )
+    } else if existing.is_some() {
         discover_existing_verified_receipt_at(
             config,
             hash,

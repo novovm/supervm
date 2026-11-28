@@ -111,19 +111,58 @@ impl PreparedReceipt {
         session: &mut QuerySession<'_>,
         domain: &MessageDomain,
         identity: TransportIdentity,
-    ) -> Result<serde_json::Value> {
+    ) -> Result<(serde_json::Value, Vec<u8>)> {
         let search = &self.search;
         checkpoint_validity(search.minimum, wall_ms()?)?;
-        let verifier = FinalityVerifier::new(domain, identity.clone());
+        let verifier = Arc::new(FinalityVerifier::new(domain, identity));
         let mut parent = self.receipt_parent.unwrap_or(self.prefix);
         if parent.height < self.height - 1 {
             parent = self
                 .extend(session, &verifier, parent, self.height - 1)
                 .await?;
         }
-        let target = ProofTarget::new(domain, identity, parent, search.transaction)?;
-        let (point, mut report) =
-            target.verify_point(&session.fetch(Download::new(self.height)).await?)?;
+        let bytes = session.fetch(Download::new(self.height)).await?;
+        let (point, report) = self.verify_proof(&bytes, parent, verifier.clone())?;
+        // The cached prefix includes the exact receipt point already. Otherwise
+        // the receipt itself supplies that point before verifying the suffix.
+        let suffix = if self.cached_receipt.is_some() {
+            self.prefix
+        } else {
+            point
+        };
+        self.extend(session, &verifier, suffix, self.end).await?;
+        checkpoint_validity(search.minimum, wall_ms()?)?;
+        Ok((report, bytes))
+    }
+
+    pub(in super::super) fn verify_offline(
+        &self,
+        bytes: &[u8],
+        verifier: Arc<FinalityVerifier>,
+    ) -> Result<serde_json::Value> {
+        let parent = self.receipt_parent.unwrap_or(self.prefix);
+        ensure!(
+            parent.height == self.height - 1,
+            "offline receipt verification requires certified local headers through its parent"
+        );
+        ensure!(
+            self.prefix.height >= self.end || self.end == self.height,
+            "offline receipt verification requires certified local headers through the installed checkpoint"
+        );
+        let (_, report) = self.verify_proof(bytes, parent, verifier)?;
+        checkpoint_validity(self.search.minimum, wall_ms()?)?;
+        Ok(report)
+    }
+
+    fn verify_proof(
+        &self,
+        bytes: &[u8],
+        parent: ParentPoint,
+        verifier: Arc<FinalityVerifier>,
+    ) -> Result<(ParentPoint, serde_json::Value)> {
+        let search = &self.search;
+        let target = ProofTarget::with_verifier(verifier.clone(), parent, search.transaction)?;
+        let (point, mut report) = target.verify_point(bytes)?;
         if let Some(expected) = self.cached_receipt {
             ensure!(
                 expected == point,
@@ -140,19 +179,11 @@ impl PreparedReceipt {
         if let Some(checkpoint) = search.minimum {
             checkpoint.check(point)?;
         }
-        // A certified prefix extending past the receipt was already verified
-        // through this exact point; otherwise build the missing suffix from it.
-        let suffix = if self.cached_receipt.is_some() {
-            self.prefix
-        } else {
-            point
-        };
-        self.extend(session, &verifier, suffix, self.end).await?;
-        checkpoint_validity(search.minimum, wall_ms()?)?;
         report["verified_parent_height"] = parent.height.into();
         report["verified_parent_state_root"] =
             super::super::super::super::super::rpc::hex(&parent.state_root).into();
-        Ok(report)
+        report["proof_sha256"] = fingerprint(bytes).into();
+        Ok((point, report))
     }
 
     async fn extend(
@@ -211,6 +242,7 @@ impl ReceiptSearch {
         domain: &MessageDomain,
         location: ReceiptLocation,
         cache_verifier: Arc<FinalityVerifier>,
+        output: Option<&Path>,
     ) -> Result<serde_json::Value> {
         let height = match location {
             ReceiptLocation::AnchorSuccessor => Some(self.anchor.height + 1),
@@ -238,9 +270,19 @@ impl ReceiptSearch {
                     )
                     .await;
                 let closed = owner.close().await;
-                let proof = outcome?;
+                let (report, proof) = outcome?;
                 closed?;
-                Ok(proof)
+                if let Some(output) = output {
+                    let parent = output
+                        .parent()
+                        .filter(|path| !path.as_os_str().is_empty())
+                        .unwrap_or_else(|| Path::new("."));
+                    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+                    file.write_all(&proof)?;
+                    file.as_file().sync_all()?;
+                    file.persist_noclobber(output)?;
+                }
+                Ok(report)
             })
     }
 
@@ -253,7 +295,7 @@ impl ReceiptSearch {
         identity: &TransportIdentity,
         domain: &MessageDomain,
         cache_verifier: Arc<FinalityVerifier>,
-    ) -> Result<serde_json::Value> {
+    ) -> Result<(serde_json::Value, Vec<u8>)> {
         let mut remaining = Duration::from_secs(30);
         let per_read = Duration::from_secs(10);
         let mut prepared = BTreeMap::new();
@@ -339,7 +381,7 @@ impl ReceiptSearch {
                 }
                 .await;
                 match result {
-                    Ok(mut verified) => {
+                    Ok((mut verified, proof)) => {
                         checkpoint_validity(self.minimum, wall_ms()?)?;
                         verified["authenticated_discovery_sources"] =
                             serde_json::json!(report.sources);
@@ -347,7 +389,7 @@ impl ReceiptSearch {
                             fingerprint(&candidate.relay_public_key).into();
                         verified["transport_identity_sha256"] =
                             fingerprint(identity.public_key()).into();
-                        return Ok(verified);
+                        return Ok((verified, proof));
                     }
                     Err(error) => errors.push(format!("{error:#}")),
                 }

@@ -23,11 +23,11 @@ pub(in crate::native_pipeline::service) use join::test_slow_cached_receipt;
 pub use join::{
     check_installed_profile, discover_existing_verified_receipt_at, discover_installed,
     discover_installed_from_profile, discover_verified_receipt, discover_verified_receipt_at,
-    discover_verified_receipt_from_profile, export_activation_parent,
+    discover_verified_receipt_from_profile, export_activation_parent, export_discovered_receipt_proof,
     follow_and_serve_installed_state, follow_installed_state,
     run_installed_public_read_snapshot, serve_installed_public_read_snapshot,
     serve_installed_read_snapshot, sync_installed_chain, sync_installed_state,
-    verify_installed_uca_execution, ReceiptLocation,
+    verify_installed_receipt_proof, verify_installed_uca_execution, ReceiptLocation,
 };
 struct Seed<'a> {
     path: PathBuf,

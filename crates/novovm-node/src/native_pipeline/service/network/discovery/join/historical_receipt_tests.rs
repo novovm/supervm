@@ -57,6 +57,7 @@ pub(in crate::native_pipeline::service) fn test_slow_cached_receipt(
         &domain,
         ReceiptLocation::QueryByHash,
         verifier,
+        None,
     )?;
     let (first, last) = observed
         .lock()

@@ -86,7 +86,7 @@ pub(crate) fn transaction_hash(hash: &str) -> Result<[u8; 32]> {
 pub(crate) struct ProofTarget {
     context: ConsensusContext,
     parent: ParentPoint,
-    verifier: FinalityVerifier,
+    verifier: Arc<FinalityVerifier>,
     transaction: [u8; 32],
 }
 
@@ -97,8 +97,19 @@ impl ProofTarget {
         parent: ParentPoint,
         transaction: [u8; 32],
     ) -> Result<Self> {
+        Self::with_verifier(
+            Arc::new(FinalityVerifier::new(domain, identity)),
+            parent,
+            transaction,
+        )
+    }
+
+    pub(crate) fn with_verifier(
+        verifier: Arc<FinalityVerifier>,
+        parent: ParentPoint,
+        transaction: [u8; 32],
+    ) -> Result<Self> {
         validate_parent(&parent)?;
-        let verifier = FinalityVerifier::new(domain, identity);
         let context = verifier.context(&parent)?;
         Ok(Self {
             context,

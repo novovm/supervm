@@ -25,8 +25,7 @@ mod chain_sync;
 mod read_snapshot_service;
 pub use chain_sync::{
     export_activation_parent, follow_and_serve_installed_state, follow_installed_state,
-    sync_installed_chain, sync_installed_state,
-    verify_installed_uca_execution,
+    sync_installed_chain, sync_installed_state, verify_installed_uca_execution,
 };
 pub use read_snapshot_service::{
     run_installed_public_read_snapshot, serve_installed_public_read_snapshot,
@@ -334,7 +333,7 @@ pub fn discover_verified_receipt_at(
     profile_sha256: Option<&str>,
     location: ReceiptLocation,
 ) -> Result<serde_json::Value> {
-    verified_receipt_at(path, hash, profile_sha256, location, true)
+    verified_receipt_at(path, hash, profile_sha256, location, true, None)
 }
 
 /// An installed-device receipt query may only use custody established on that device.
@@ -344,7 +343,61 @@ pub fn discover_existing_verified_receipt_at(
     profile_sha256: &str,
     location: ReceiptLocation,
 ) -> Result<serde_json::Value> {
-    verified_receipt_at(path, hash, Some(profile_sha256), location, false)
+    verified_receipt_at(path, hash, Some(profile_sha256), location, false, None)
+}
+
+pub fn export_discovered_receipt_proof(
+    path: &Path,
+    hash: &str,
+    profile_sha256: &str,
+    location: ReceiptLocation,
+    existing_identity: bool,
+    output: &Path,
+) -> Result<serde_json::Value> {
+    verified_receipt_at(
+        path,
+        hash,
+        Some(profile_sha256),
+        location,
+        !existing_identity,
+        Some(output),
+    )
+}
+
+pub fn verify_installed_receipt_proof(
+    path: &Path,
+    profile_sha256: &str,
+    hash: &str,
+    height: u64,
+    proof: &Path,
+) -> Result<serde_json::Value> {
+    use novovm_protocol::native_query::MAX_ARCHIVE_PROOF_BYTES;
+    use std::io::Read;
+
+    let transaction = transaction_hash(hash)?;
+    let (profile, domain, anchor) = installed_chain_profile(path, Some(profile_sha256))?;
+    let data = installed_state_base()?;
+    let search = chain_sync::ReceiptSearch::open(&data, &profile, anchor, transaction)?;
+    let library = profile_base(path)?.join(&profile.library);
+    let verifier = Arc::new(FinalityVerifier::new(
+        &domain,
+        load_transport_verifier(&library, &profile.library_sha256)?,
+    ));
+    ensure!(
+        fs::metadata(proof)?.is_file(),
+        "receipt proof must be a regular file"
+    );
+    let file = fs::File::open(proof)?;
+    let mut bytes = Vec::new();
+    file.take((MAX_ARCHIVE_PROOF_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() <= MAX_ARCHIVE_PROOF_BYTES,
+        "receipt proof byte limit"
+    );
+    search
+        .prepare(height, &verifier)?
+        .verify_offline(&bytes, verifier)
 }
 
 fn verified_receipt_at(
@@ -353,6 +406,7 @@ fn verified_receipt_at(
     profile_sha256: Option<&str>,
     location: ReceiptLocation,
     provision: bool,
+    output: Option<&Path>,
 ) -> Result<serde_json::Value> {
     let transaction = transaction_hash(hash)?;
     let (profile, domain, anchor) = installed_chain_profile(path, profile_sha256)?;
@@ -361,7 +415,9 @@ fn verified_receipt_at(
     let base = profile_base(path)?;
     let identity = client_identity(&data, base, &profile, provision)?;
     let verifier = Arc::new(FinalityVerifier::new(&domain, identity.clone()));
-    search.execute(base, &profile, &identity, &domain, location, verifier)
+    search.execute(
+        base, &profile, &identity, &domain, location, verifier, output,
+    )
 }
 
 /// Validate the pinned release's chain and discovery inputs without accessing
