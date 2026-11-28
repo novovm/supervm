@@ -13,8 +13,8 @@ use anyhow::{bail, ensure, Context, Result};
 use iroh::{
     dns::{DnsResolver, NameserverConfig},
     endpoint::{
-        presets, Connection, LocalTransportAddr, PortmapperConfig, QuicTransportConfig, RecvStream,
-        SendStream,
+        presets, Connection, LocalTransportAddr, PathId, PortmapperConfig, QuicTransportConfig,
+        RecvStream, SendStream,
     },
     Endpoint, EndpointAddr, EndpointId, NetReportConfig, RelayMode, RelayUrl, TransportAddr,
 };
@@ -47,14 +47,25 @@ pub enum IrohSelectedPathV1 {
 /// Read the existing connection while framed IO borrows the stream.
 pub struct IrohPathObserverV1(Connection);
 
+/// Connection-local path identity coupled with its reportable coordinates.
+#[derive(PartialEq, Eq)]
+pub struct IrohPathSampleV1 {
+    id: PathId,
+    pub path: IrohSelectedPathV1,
+}
+
 impl IrohPathObserverV1 {
     pub fn selected(&self) -> Option<IrohSelectedPathV1> {
+        self.sample().map(|selected| selected.path)
+    }
+
+    pub fn sample(&self) -> Option<IrohPathSampleV1> {
         if self.0.close_reason().is_some() {
             return None;
         }
         let paths = self.0.paths();
         let path = paths.iter().find(|path| path.is_selected())?;
-        match (path.local_addr(), path.remote_addr()) {
+        let coordinates = match (path.local_addr(), path.remote_addr()) {
             (LocalTransportAddr::Ip(local_ip), TransportAddr::Ip(remote_address)) => {
                 Some(IrohSelectedPathV1::Direct {
                     local_ip: *local_ip,
@@ -68,7 +79,11 @@ impl IrohPathObserverV1 {
                 })
             }
             _ => None,
-        }
+        }?;
+        Some(IrohPathSampleV1 {
+            id: path.id(),
+            path: coordinates,
+        })
     }
 }
 

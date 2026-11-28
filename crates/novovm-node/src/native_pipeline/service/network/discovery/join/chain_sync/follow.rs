@@ -443,10 +443,29 @@ impl Follower {
         let mut next_probe = Instant::now() + RECOVER_NATIVE;
         let mut alternate_cursor = 0;
         let mut observed_path = None;
+        let mut route_checked = false;
         loop {
             let progress = self.sync(session).await?;
             if let Some(state) = progress {
                 let tip = self.chain.tip;
+                let selected = path.as_ref().and_then(IrohPathObserverV1::sample);
+                let path_changed = selected != observed_path;
+                let mut confirmed_path = None;
+                if !route_checked || path_changed {
+                    // A warm cache and an authenticated status do not show that
+                    // this session actually serves the committed state.
+                    let has_root =
+                        tip.state_root != crate::native_pipeline::state::tree::empty_root();
+                    if has_root {
+                        state::verify_remote_root(session, tip.height, tip.state_root).await?;
+                        self.chain.checkpoint_validity(wall_ms()?)?;
+                    }
+                    route_checked = true;
+                    if selected == path.as_ref().and_then(IrohPathObserverV1::sample) {
+                        confirmed_path = selected;
+                    }
+                    observed_path = None;
+                }
                 if self.reported.as_ref() != Some(&(tip, route.clone())) {
                     self.emit(serde_json::json!({
                         "event":"verified_state", "height":tip.height,
@@ -463,17 +482,15 @@ impl Follower {
                     self.reported = Some((tip, route.clone()));
                     self.retrying = false;
                 }
-                if let Some(selected) = path.as_ref().and_then(IrohPathObserverV1::selected) {
-                    if observed_path.as_ref() != Some(&selected) {
-                        self.emit(serde_json::json!({
-                            "event": "verified_carrier_path",
-                            "height": tip.height,
-                            "peer_transport_sha256": route.peer,
-                            "locator_sequence": route.locator_sequence,
-                            "path": selected,
-                        }))?;
-                        observed_path = Some(selected);
-                    }
+                if let Some(selected) = confirmed_path {
+                    self.emit(serde_json::json!({
+                        "event": "verified_carrier_path",
+                        "height": tip.height,
+                        "peer_transport_sha256": route.peer,
+                        "locator_sequence": route.locator_sequence,
+                        "path": selected.path,
+                    }))?;
+                    observed_path = Some(selected);
                 }
             }
             if let Some(scope) = scope {

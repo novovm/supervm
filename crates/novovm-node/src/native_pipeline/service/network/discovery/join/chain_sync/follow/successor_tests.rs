@@ -54,7 +54,7 @@ fn advancing_route_requires_the_state_root_on_the_authenticated_path() -> Result
         chain.tip.height == 41,
         "test must begin at the certified predecessor"
     );
-    let follower = Follower {
+    let mut follower = Follower {
         base: fixture,
         chain,
         cache: StateCache::open(scratch.path().join("nodes"))?,
@@ -104,6 +104,7 @@ fn advancing_route_requires_the_state_root_on_the_authenticated_path() -> Result
         let attempt = client.with_continuous_service_v4(|| Ok(()), |scope| Box::pin(async move {
             let address = address.await?;
             let (mut stream, channel) = connect_route(scope, &address, &provider_key, consumer, &domain).await?;
+            let path = stream.iroh_path_observer();
             let mut session = QuerySession::attach(&mut stream, channel, domain)?;
             let advertised = peer_status(&mut session, follower.chain.tip).await?;
             ensure!(advertised.height == 42, "test provider must advertise its certified snapshot");
@@ -114,6 +115,30 @@ fn advancing_route_requires_the_state_root_on_the_authenticated_path() -> Result
             let proof = follower.probe_successor(&mut session, &advertised).await?;
             ensure!(proof == expected, "qualified route returned a different proof");
             println!("certified H42 proof rejected without state, accepted after the same authenticated peer served the root");
+            follower.chain.append(&proof)?;
+            let state = follower.sync(&mut session).await?.context("certified snapshot not ready")?;
+            ensure!(state.nodes == 19 && state.leaves == 10, "cache did not verify the original H42 state");
+            let route = Route {
+                carrier: Carrier::Iroh,
+                peer: fingerprint(&provider_key),
+                native_address: None,
+                locator_sequence: None,
+            };
+            serves_state.store(false, Ordering::Release);
+            let denied = follower.run_route(&mut session, route.clone(), None, path).await;
+            ensure!(
+                matches!(denied, Err(ref error) if error.to_string().contains("cannot serve the certified state snapshot")),
+                "authenticated status alone qualified a warm-cache route"
+            );
+            ensure!(follower.reported.is_none(), "status-only route recorded a recovery");
+
+            serves_state.store(true, Ordering::Release);
+            let hold = tokio::time::timeout(Duration::from_secs(2),
+                follower.run_route(&mut session, route.clone(), None, None)).await;
+            ensure!(hold.is_err(), "qualified warm-cache route terminated");
+            ensure!(follower.reported == Some((follower.chain.tip, route)),
+                "available authenticated state was not reported");
+            println!("warm cache did not qualify the status-only session, but the authenticated root read did");
             Ok(())
         }));
         let result = tokio::time::timeout(Duration::from_secs(20), async {
