@@ -110,17 +110,19 @@ def check_profile(cfg, publisher):
     return sources
 
 
-def verified_event(rows, args, both_sources=()):
+def verified_event(rows, args, required_sources=(), configured_sources=()):
     if not rows:
         return None
     identity = rows[0].get("transport_identity_sha256", "")
     require(HEX.fullmatch(identity) and identity != args.publisher, "invalid follower identity")
-    require(identity not in both_sources, "follower reused a bootstrap identity")
+    require(identity not in configured_sources and identity not in required_sources,
+            "follower reused a bootstrap identity")
     require(rows[0]["event"] == "starting" and rows[0].get("reopened_height") == 0
             and sum(r["event"] == "starting" for r in rows) == 1, "expected one empty-device startup")
     require(all(r.get("transport_identity_sha256") == identity for r in rows), "follower identity changed")
     sequences = set()
-    dual_sequences = set()
+    attributed_sequences = set()
+    required = set(required_sources)
     for row in rows:
         if row.get("peer_transport_sha256") != args.publisher:
             continue
@@ -128,18 +130,17 @@ def verified_event(rows, args, both_sources=()):
         if row["event"] == "verified_locator_accepted" and type(seq) is int and seq > 0:
             sequences.add(seq)
             returned_by = row.get("locator_returned_by")
-            if both_sources and isinstance(returned_by, list) and len(returned_by) == 2 and (
-                all(isinstance(source, str) for source in returned_by)
-                and set(returned_by) == set(both_sources)
-            ):
-                dual_sequences.add(seq)
+            if (required and isinstance(returned_by, list) and len(returned_by) == len(required)
+                    and all(isinstance(source, str) for source in returned_by)
+                    and set(returned_by) == required):
+                attributed_sequences.add(seq)
         if row["event"] == "verified_state" and row.get("height") == args.height:
             require(row.get("transport") == "iroh" and row.get("native_peer_address") is None
                     and type(seq) is int and seq in sequences, "missing preceding authenticated Iroh locator")
             require(row.get("state_root") == "0x" + args.state_root and
                     (row.get("verified_nodes"), row.get("downloaded_nodes"), row.get("verified_leaves"))
                     == (args.nodes, args.nodes, args.leaves), "state commitment or full download differs")
-            if not both_sources or seq in dual_sequences:
+            if not required or seq in attributed_sequences:
                 return row
     return None
 
@@ -181,8 +182,14 @@ def witness(args, run, report):
     profile = (root / PROFILE).read_bytes()
     require(sha(profile) == args.profile_sha256, "wrong installed profile")
     cfg = json.loads(profile)
-    report["bootstrap_public_sha256"] = check_profile(cfg, args.publisher)
-    sources = report["bootstrap_public_sha256"] if args.require_both_sources else ()
+    configured_sources = check_profile(cfg, args.publisher)
+    report["bootstrap_public_sha256"] = configured_sources
+    if args.require_only_source:
+        require(args.require_only_source in configured_sources, "required source is absent from the installed profile")
+        required_sources = [args.require_only_source]
+    else:
+        required_sources = configured_sources if args.require_both_sources else []
+    report["required_locator_sources"] = required_sources
     installer = root / INSTALLER
     api = runpy.run_path(str(installer))
     config = api["base_dir"]("XDG_CONFIG_HOME", ".config")
@@ -219,12 +226,14 @@ def witness(args, run, report):
                     == release / "bin/novovm-native-client", "follower invocation or binary changed")
             rows = journal(info)
             report["events"] = rows
-            if verified_event(rows, args, sources):
+            verified = verified_event(rows, args, required_sources, configured_sources)
+            if verified is not None:
+                report["verified_state"] = verified
                 report["disk"] = disk_evidence(state, cfg, args, rows[0]["transport_identity_sha256"])
                 require(properties() == info, "service changed during verification")
                 return
             time.sleep(1)
-        detail = " through a locator returned by both authenticated contacts" if args.require_both_sources else ""
+        detail = " through a locator returned by exactly the required contacts" if required_sources else ""
         raise ValueError("timed out before full verified remote state" + detail)
     except (Exception, KeyboardInterrupt) as error:
         report["observation_error"] = str(error)
@@ -247,8 +256,11 @@ def main():
     for name in ("height", "nodes", "leaves"):
         parser.add_argument("--" + name, type=positive, required=True)
     parser.add_argument("--timeout", type=positive, default=360, help="observation period in seconds")
-    parser.add_argument("--require-both-sources", action="store_true",
-                        help="require both installed contacts to return the exact locator used for state verification")
+    attribution = parser.add_mutually_exclusive_group()
+    attribution.add_argument("--require-both-sources", action="store_true",
+                             help="require both installed contacts to return the exact locator used for state verification")
+    attribution.add_argument("--require-only-source", type=digest_option, metavar="SHA256",
+                             help="require the locator used for state verification to come only from this authenticated contact")
     args = parser.parse_args()
     require(sys.platform == "linux" and os.getuid() != 0, "a non-root Linux login is required")
     os.umask(0o077)
