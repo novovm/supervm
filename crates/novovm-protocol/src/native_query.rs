@@ -21,6 +21,7 @@ const MAGIC_APPLICATION_V8: &[u8; 8] = b"NVQUERY8";
 const MAGIC_PROPOSAL_V9: &[u8; 8] = b"NVQUERY9";
 const MAGIC_ARCHIVE_V10: &[u8; 8] = b"NVQARC10";
 const MAGIC_STATE_V11: &[u8; 8] = b"NVQSTA11";
+const MAGIC_REGISTRATION_V12: &[u8; 8] = b"NVQREG12";
 const MAX_PROPOSAL_REPLY_BYTES: usize = 4096;
 // Room for the canonical ML-DSA-65 round-BFT proposal, including its prefix.
 const MAX_SIGNED_PROPOSAL_BYTES: usize = 3840;
@@ -211,6 +212,10 @@ pub enum Query {
     ReceiptProof(ArchiveSelector),
     FinalizedHeader(ArchiveSelector),
     StateNode(StateNodeSelector),
+    /// Serving-node intake and recent publication for SHA-256 of signed NUIR bytes.
+    UcaRegistration {
+        request_hash: Hash,
+    },
 }
 
 impl Query {
@@ -256,6 +261,18 @@ pub enum IdentityStateV1 {
     Pending,
     Missing { state_root: Hash, height: u64 },
     Present(UcaIdentityViewV1),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RegistrationStatusV1 {
+    NotRecent,
+    Received,
+    Verified,
+    RetryQueueFull,
+    RetryVerification,
+    OutsideValidityWindow,
+    IdentityAlreadyRegistered,
+    Finalized { height: u64, block_hash: Hash },
 }
 
 /// Metadata at one published root. Possession, head trust and project/tool
@@ -577,6 +594,7 @@ pub enum Answer {
     ReceiptProof(ArchiveChunk),
     FinalizedHeader(ArchiveChunk),
     StateNode(StateNodePayload),
+    UcaRegistration(RegistrationStatusV1),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Response {
@@ -623,6 +641,9 @@ fn is_identity(frame: &Frame) -> bool {
 fn is_application(frame: &Frame) -> bool {
     matches!(request(frame).query, Query::UcaApplicationGrant { .. })
 }
+fn is_registration(frame: &Frame) -> bool {
+    matches!(request(frame).query, Query::UcaRegistration { .. })
+}
 fn is_proposal(query: &Query) -> bool {
     query.proposal_selector().is_some()
 }
@@ -666,6 +687,9 @@ fn valid_request(request: &Request) -> bool {
     if let Query::StateNode(selector) = &request.query {
         return selector.is_valid();
     }
+    if let Query::UcaRegistration { request_hash } = &request.query {
+        return *request_hash != [0; 32];
+    }
     true
 }
 fn valid(frame: &Frame) -> bool {
@@ -685,6 +709,12 @@ fn answer_matches(request: &Request, answer: &Answer) -> bool {
         | (Query::NovBalance { .. }, Answer::NovBalance(_))
         | (Query::AssetSpendState { .. }, Answer::AssetSpendState(_))
         | (Query::UcaIdentity { .. }, Answer::UcaIdentity(_)) => true,
+        (Query::UcaRegistration { .. }, Answer::UcaRegistration(status)) => match status {
+            RegistrationStatusV1::Finalized { height, block_hash } => {
+                *height > 0 && *block_hash != [0; 32]
+            }
+            _ => true,
+        },
         (Query::UcaApplicationGrant { .. }, Answer::UcaApplicationGrant(state)) => match state {
             ApplicationGrantStateV1::Pending => true,
             ApplicationGrantStateV1::IdentityMissing { state_root, .. }
@@ -754,6 +784,8 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
     };
     let mut bytes = if response {
         MAGIC_RESPONSE_V6
+    } else if is_registration(&frame) {
+        MAGIC_REGISTRATION_V12
     } else if state {
         MAGIC_STATE_V11
     } else if is_archive(&request(&frame).query) {
@@ -795,11 +827,12 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
     let proposal = bytes.starts_with(MAGIC_PROPOSAL_V9);
     let archive = bytes.starts_with(MAGIC_ARCHIVE_V10);
     let state = bytes.starts_with(MAGIC_STATE_V11);
+    let registration = bytes.starts_with(MAGIC_REGISTRATION_V12);
     let batch = if bytes.starts_with(MAGIC_V1) {
         false
     } else if bytes.starts_with(MAGIC_V2) {
         true
-    } else if uca || identity || application || proposal || archive || state {
+    } else if uca || identity || application || proposal || archive || state || registration {
         false
     } else {
         return Err("native query header/size");
@@ -823,6 +856,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
         || is_uca(&frame) != uca
         || is_identity(&frame) != identity
         || is_application(&frame) != application
+        || is_registration(&frame) != registration
         || is_proposal(&request(&frame).query) != proposal
         || is_archive(&request(&frame).query) != archive
         || matches!(request(&frame).query, Query::StateNode(_)) != state
@@ -876,6 +910,43 @@ mod tests {
                 genesis: [2; 32],
                 identity: UcaIdentityIdV1::new("uca:Alice_01.test-id").unwrap(),
             },
+        }
+    }
+
+    #[test]
+    fn registration_status_is_bound_to_the_signed_request_hash() {
+        let request = Request {
+            query: Query::UcaRegistration {
+                request_hash: [9; 32],
+            },
+            ..identity_request()
+        };
+        let frame = Frame::Request(request.clone());
+        let mut wire = encode(frame.clone()).unwrap();
+        assert!(wire.starts_with(MAGIC_REGISTRATION_V12));
+        assert_eq!(decode(&wire).unwrap(), frame);
+        wire[..8].copy_from_slice(MAGIC_IDENTITY_V7);
+        assert!(decode(&wire).is_err());
+        let other = Request {
+            query: Query::UcaRegistration {
+                request_hash: [8; 32],
+            },
+            ..request.clone()
+        };
+        for status in [
+            RegistrationStatusV1::RetryQueueFull,
+            RegistrationStatusV1::Finalized {
+                height: 10,
+                block_hash: [7; 32],
+            },
+        ] {
+            let response = Response {
+                request: request.clone(),
+                answer: Answer::UcaRegistration(status),
+            };
+            let wire = encode(Frame::Response(response.clone())).unwrap();
+            assert_eq!(decode_response(&wire, &request).unwrap(), Some(response));
+            assert_eq!(decode_response(&wire, &other).unwrap(), None);
         }
     }
 

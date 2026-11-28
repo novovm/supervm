@@ -25,6 +25,7 @@ use novovm_protocol::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     fs::File,
     io::Read,
@@ -306,6 +307,7 @@ fn answer_view(answer: Answer) -> Value {
         Answer::ConsensusProposal(status) => proposal_view(status, None),
         Answer::ConsensusProposalProgress { status, progress } => proposal_view(status, progress),
         Answer::UcaIdentity(state) => json!({"UcaIdentity":state}),
+        Answer::UcaRegistration(status) => json!({"UcaRegistration":status}),
         Answer::UcaApplicationGrant(state) => json!({"UcaApplicationGrant":state}),
         Answer::Error(error) => json!({"Error":error}),
         Answer::ReceiptProof(chunk) => json!({"ReceiptProofChunk": {
@@ -377,13 +379,20 @@ fn operation(action: &str, input: Option<&Path>) -> Result<Operation> {
             novovm_protocol::uca_registration::SignedUcaRegistrationV1::decode(&raw)?;
             Ok(Operation::Submit(SignedInput::Registration(raw)))
         }
+        ("registration-status", Some(path)) => {
+            let raw = read_bounded(path, codec.transaction_bytes)?;
+            novovm_protocol::uca_registration::SignedUcaRegistrationV1::decode(&raw)?;
+            Ok(Operation::Query(Query::UcaRegistration {
+                request_hash: Sha256::digest(raw).into(),
+            }))
+        }
         ("submit-application", Some(path)) => {
             let raw = read_bounded(path, codec.transaction_bytes)?;
             novovm_protocol::uca_application::SignedApplicationGrantV1::decode(&raw)?;
             Ok(Operation::Submit(SignedInput::Application(raw)))
         }
         _ => anyhow::bail!(
-            "expected status, query <request.nvquery>, submit <signed-batch.nuapfl>, submit-registration <signed.nuir>, or submit-application <signed.nuap>"
+            "expected status, query <request.nvquery>, submit <signed-batch.nuapfl>, submit-registration <signed.nuir>, registration-status <signed.nuir>, or submit-application <signed.nuap>"
         ),
     }
 }

@@ -497,7 +497,7 @@ pub struct RpcLifecycle {
     state_node_queries: native_query::StateNodeQueries,
     application_selection: Option<application::ApplicationSelection>,
     prefer_application: bool,
-    registration_intake: Option<registration::RegistrationIntake>,
+    registrations: registration::RegistrationQueue,
 }
 
 impl RpcLifecycle {
@@ -557,7 +557,7 @@ impl RpcLifecycle {
             state_node_queries: native_query::StateNodeQueries::default(),
             application_selection: None,
             prefer_application: true,
-            registration_intake: None,
+            registrations: registration::RegistrationQueue::default(),
         })
     }
 
@@ -635,7 +635,7 @@ impl RpcLifecycle {
             self.record_selection_gate("projection_pending", None, 0, None, None);
             return Ok(());
         }
-        if self.poll_registration()? || self.poll_application_selection()? {
+        if self.poll_registration(now)? || self.poll_application_selection()? {
             return Ok(());
         }
         let awaiting_admission = self.incoming.is_some()
@@ -1107,10 +1107,11 @@ impl RpcLifecycle {
             Some(block.context("decided block missing during RPC projection")?)
         };
         let point = block.as_ref().map_or(head, |block| block.point());
-        if block
-            .as_ref()
-            .is_some_and(|block| block.stored().is_registration())
-        {
+        if let Some(block) = block.as_ref().filter(|block| block.stored().is_registration()) {
+            let [raw] = block.stored().raw_transactions() else {
+                anyhow::bail!("published registration must have one proof");
+            };
+            self.registrations.publish(raw, point)?;
             self.indexed_height = point.height;
             self.archive_projection_blocks = self.archive_projection_blocks.saturating_add(1);
             self.archive = None;

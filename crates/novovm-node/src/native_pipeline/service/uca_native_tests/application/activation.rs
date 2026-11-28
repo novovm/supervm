@@ -5,9 +5,10 @@ use crate::native_pipeline::{
     service::client::operator::receipt_proof::Download,
 };
 use novovm_protocol::{
-    native_query::IdentityStateV1,
+    native_query::{IdentityStateV1, RegistrationStatusV1},
     uca_registration::{SignedUcaRegistrationV1, UcaRegistrationIntentV1, REGISTRATION_CONTEXT_V1},
 };
+mod concurrent;
 
 pub(super) fn run(
     runtime: &AoemExecFacade,
@@ -73,6 +74,7 @@ pub(super) fn run(
     let mut configs = configs.to_vec();
     for config in &mut configs {
         config.business_activation = Some(bundle.clone());
+        config.native_client_limit = 8;
     }
     drop(clients);
     for node in nodes {
@@ -123,10 +125,56 @@ pub(super) fn run(
         public_key: key.public_key.to_vec(),
         signature,
     };
-    let prepared = clients[ingress].prepare_uca_registration(proof.encode()?)?;
-    send_input(&mut nodes, &mut clients[ingress], &prepared)?;
+    let mut competing = proof.intent.clone();
+    competing.valid_until_height += 1;
+    let competing = runtime.sign_uca_registration_v1(
+        competing,
+        &key.public_key,
+        &key.expanded_secret_key,
+        boundary.chain_id,
+        boundary.genesis_config_commitment,
+        boundary.height,
+    )?;
+    let raw = [proof.encode()?, competing.encode()?];
+    let registration_queries = raw.each_ref().map(|raw| Query::UcaRegistration {
+        request_hash: Sha256::digest(raw).into(),
+    });
+    let solo = std::slice::from_mut(&mut nodes[ingress]);
+    for raw in raw {
+        let prepared = clients[ingress].prepare_uca_registration(raw)?;
+        send_input(solo, &mut clients[ingress], &prepared)?;
+    }
+    let deadline = Instant::now() + TIMEOUT;
+    for selector in &registration_queries {
+        loop {
+            ensure!(
+                Instant::now() < deadline,
+                "same-identity concurrent intake deadline"
+            );
+            match query(solo, &mut clients[ingress], selector.clone())? {
+                Answer::UcaRegistration(RegistrationStatusV1::NotRecent) => continue,
+                Answer::UcaRegistration(
+                    RegistrationStatusV1::Received | RegistrationStatusV1::Verified,
+                ) => break,
+                answer => anyhow::bail!("same-identity claims must both reach intake: {answer:?}"),
+            }
+        }
+    }
     let registered = heads(&mut nodes, &mut clients, boundary.height, 0)?;
     assert_ne!(registered[0].state_root, parent.state_root);
+    let contests = registration_queries
+        .iter()
+        .map(|selector| query(&mut nodes, &mut clients[ingress], selector.clone()))
+        .collect::<Result<Vec<_>>>()?;
+    let winner = Answer::UcaRegistration(RegistrationStatusV1::Finalized {
+        height: boundary.height,
+        block_hash: registered[0].block_hash,
+    });
+    assert!(contests.contains(&winner));
+    assert!(contests.contains(&Answer::UcaRegistration(
+        RegistrationStatusV1::IdentityAlreadyRegistered
+    )));
+    println!("UCA same identity: {registration_queries:?} => {contests:?}");
     let selector = Query::UcaIdentity {
         chain_id: boundary.chain_id,
         genesis: boundary.genesis_config_commitment,
@@ -235,6 +283,24 @@ pub(super) fn run(
         }
     }
     assert_eq!(heads(&mut nodes, &mut clients, revoke_height, 0)?, revoked);
+    let (request, expected, final_height) =
+        concurrent::run(runtime, &configs, &mut nodes, &mut clients)?;
+    let before_reopen = heads(&mut nodes, &mut clients, final_height, 0)?;
+    drop(clients);
+    for node in nodes {
+        node.node.shutdown()?;
+    }
+    let (mut nodes, mut clients) = reopen()?;
+    assert_eq!(
+        heads(&mut nodes, &mut clients, final_height, 0)?,
+        before_reopen
+    );
+    for client in &mut clients {
+        assert_eq!(
+            query(&mut nodes, client, request.clone())?,
+            Answer::UcaRegistration(expected)
+        );
+    }
     drop(clients);
     for node in nodes {
         node.node.shutdown()?;

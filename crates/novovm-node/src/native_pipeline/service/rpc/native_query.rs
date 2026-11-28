@@ -170,6 +170,9 @@ impl RpcLifecycle {
         } else {
             match query {
                 Query::Status => unreachable!(),
+                Query::UcaRegistration { request_hash } => {
+                    Answer::UcaRegistration(self.registrations.status(request_hash))
+                }
                 Query::ConsensusProposal {
                     height,
                     round,

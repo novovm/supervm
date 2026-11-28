@@ -1034,7 +1034,7 @@ impl RpcLifecycle {
                         self.admission.incoming_origin = None;
                         self.admission.made_progress = true;
                         if self
-                            .receive_registration(raw, self.incoming_from_client)
+                            .receive_registration(raw, self.incoming_from_client, Instant::now())
                             .is_err()
                         {
                             self.gossip_rejected += 1;
