@@ -168,8 +168,10 @@ def client_environment(release, state, credential_dir):
 
 def unit_text(release, arguments, state, credential_dir):
     # ':' disables systemd command-line environment expansion, including literal $ in XDG paths.
-    argv = " ".join(
-        unit_arg(v) for v in (":" + str(release / CLIENT), *arguments)
+    program = ":" + str(release / CLIENT)
+    argv = " ".join(unit_arg(v) for v in (program, *arguments))
+    condition = " ".join(
+        unit_arg(v) for v in (program, arguments[0], "check-installed-profile", arguments[2])
     )
     environment = "".join(
         f"Environment={unit_arg(name+'='+value)}\n"
@@ -183,7 +185,7 @@ def unit_text(release, arguments, state, credential_dir):
         description = "NOVOVM verified state follower"
     return (
         f"[Unit]\nDescription={description}\n\n[Service]\nType=exec\n"
-        f"{environment}UMask=0077\nExecStart={argv}\n"
+        f"{environment}UMask=0077\nExecCondition={condition}\nExecStart={argv}\n"
         "Restart=on-failure\nRestartSec=5s\n\n[Install]\nWantedBy=default.target\n"
     )
 
