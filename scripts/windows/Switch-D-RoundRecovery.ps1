@@ -119,7 +119,7 @@ if ($Owner) {
     $env:NOVOVM_NODE_MODE = 'native_execution_tick'
     $env:NOVOVM_NATIVE_EXECUTION_CONFIG = $plan.config
     $env:NOVOVM_NATIVE_EXECUTION_START = 'existing'
-    $env:NOVOVM_NATIVE_EXECUTION_RUN_MS = '86400000'
+    Remove-Item Env:NOVOVM_NATIVE_EXECUTION_RUN_MS -ErrorAction SilentlyContinue
     $env:NOVOVM_PROFILE_NATIVE_DELIVERY = '1'
     $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH = Join-Path $work 'logs\progress.json'
     & $plan.candidate 1> (Join-Path $work 'logs\node.stdout') 2> (Join-Path $work 'logs\node.stderr')
@@ -171,7 +171,13 @@ if (!$Apply) {
 $null = New-Item -ItemType Directory -Path $work
 Protect-WorkDirectory
 $package = Join-Path $work 'release'
-Copy-Item -LiteralPath $PackageRoot -Destination $package -Recurse
+$null = New-Item -ItemType Directory -Path $package
+Copy-Item -LiteralPath (Join-Path $PackageRoot 'release-manifest.json') -Destination $package
+foreach ($entry in $release.artifacts) {
+    $file = Join-Path $package $entry.path
+    $null = New-Item -ItemType Directory -Path (Split-Path -Parent $file) -Force
+    Copy-Item -LiteralPath (Join-Path $PackageRoot $entry.path) -Destination $file
+}
 $null = Read-Release $package
 $manifest = Join-Path $package 'release-manifest.json'
 $candidate = Join-Path $package 'bin\novovm-node.exe'
