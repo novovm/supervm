@@ -63,16 +63,18 @@ Privacy-only 的发送、收件和回执只走合格隐私路径。缺少合格�
 ### 已同步 Client 的公开只读服务
 
 Windows 安装器默认由当前用户的登录任务运行 `follow-state`。已同步的设备可以用
-`-PublicReadSnapshotHeight <高度> -PublicReadMaxStateNodes <节点数>` 显式选择由同一个
-任务提供指定高度的已验快照。既有同步任务需要先停止才能切换。前台使用
+`-PublicReadSnapshotHeight <高度> -PublicReadMaxStateNodes <节点数>` 显式选择同一个
+任务从指定已验高度开始供给。既有同步任务需要先停止才能切换。前台使用
 `novovm-native-client <profile> run-public-read-snapshot <profile-sha256> <高度> <节点数>`。
 公开读取任务校验原缓存并复用本机通信身份，只经发行配置允许的中继公布短租约。它会
 认证引导、采纳该域内由对应固定公钥签署的更新坐标，并定期续租。
 
 停止已安装的公开读取任务时，使用相同安装参数和 `-Action StopPublicRead`。前台可以
 用 Ctrl+C。任务退出会关闭读取端点。最低终结检查点到期也会停止签发并关闭端点。已从
-引导取得的租约仍受原有有效期约束。常驻任务提供明确选择的固定高度，继续同步请使用
-原 `follow-state`。原限时回环和限时公开读取命令仍可用于定向验收。
+引导取得的租约仍受原有有效期约束。常驻任务定期观察本地缓存，独立验签后继区块并
+验证完整状态树后更新服务高度，同时保留上一份已验证状态供正在同步的会话使用。
+缓存未写齐时继续服务当前已验高度。同步来源仍由 `follow-state` 提供。限时回环和
+限时公开读取命令继续提供显式选择的固定高度。
 
 Linux 普通用户安装器默认在登录时通过 `novovm-native-client.service` 运行 `follow-state`。
 设备已同步到所需高度后，可先用 `systemctl --user stop novovm-native-client.service`

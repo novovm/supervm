@@ -24,8 +24,14 @@ use std::{
     io::{BufWriter, Read, Seek, SeekFrom, Write},
     num::NonZeroUsize,
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Instant,
 };
+
+const MAX_DIGEST_INDEX_BYTES: u64 = 256 * 1024 * 1024;
 
 pub struct ReadSnapshot {
     headers: PathBuf,
@@ -36,7 +42,24 @@ pub struct ReadSnapshot {
     first_height: u64,
     cached_header: Option<(u64, [u8; 32], Vec<u8>)>,
     tip: ParentPoint,
+    previous_tip: Option<ParentPoint>,
     minimum: Option<MinimumFinalizedCheckpoint>,
+    verifier: Arc<FinalityVerifier>,
+}
+
+pub(in super::super) struct SnapshotRefresh {
+    headers: PathBuf,
+    nodes: PathBuf,
+    first_height: u64,
+    parent: ParentPoint,
+    minimum: Option<MinimumFinalizedCheckpoint>,
+    verifier: Arc<FinalityVerifier>,
+}
+
+pub(in super::super) struct SnapshotAdvance {
+    parent: ParentPoint,
+    tip: ParentPoint,
+    suffix: fs::File,
 }
 
 impl ReadSnapshot {
@@ -58,7 +81,6 @@ impl ReadSnapshot {
             "snapshot must contain a finalized successor"
         );
         // Relative to the trusted anchor: cap temporary disk, not chain height.
-        const MAX_DIGEST_INDEX_BYTES: u64 = 256 * 1024 * 1024;
         ensure!(
             height - anchor.height <= MAX_DIGEST_INDEX_BYTES / 32,
             "snapshot digest index exceeds 256 MiB; use a nearer trusted anchor"
@@ -70,10 +92,10 @@ impl ReadSnapshot {
             "snapshot height precedes the required checkpoint"
         );
         let library = profile_base(profile_path)?.join(&profile.library);
-        let verifier = FinalityVerifier::new(
+        let verifier = Arc::new(FinalityVerifier::new(
             &domain,
             load_transport_verifier(&library, &profile.library_sha256)?,
-        );
+        ));
         let headers = checkpoint_root_in(data, &profile, anchor)?;
         let nodes = headers.join("state-nodes");
         ensure!(
@@ -97,6 +119,7 @@ impl ReadSnapshot {
         let mut nodes = SnapshotNodes {
             directory: nodes,
             verify_deadline: Some(verify_deadline),
+            cancelled: None,
         };
         let mut proof_index = BufWriter::new(tempfile::tempfile()?);
         let first_height = anchor.height + 1;
@@ -138,8 +161,37 @@ impl ReadSnapshot {
             first_height,
             cached_header: None,
             tip,
+            previous_tip: None,
             minimum,
+            verifier,
         })
+    }
+
+    pub(in super::super) fn refresh(&self) -> SnapshotRefresh {
+        SnapshotRefresh {
+            headers: self.headers.clone(),
+            nodes: self.nodes.directory.clone(),
+            first_height: self.first_height,
+            parent: self.tip,
+            minimum: self.minimum,
+            verifier: self.verifier.clone(),
+        }
+    }
+
+    pub(in super::super) fn advance(&mut self, mut prepared: SnapshotAdvance) -> Result<u64> {
+        ensure!(
+            prepared.parent == self.tip,
+            "snapshot refresh parent changed"
+        );
+        checkpoint_validity(self.minimum, wall_ms()?)?;
+        self.proof_index.seek(SeekFrom::Start(
+            (self.tip.height - self.first_height + 1) * 32,
+        ))?;
+        // Until the copy succeeds, any bytes beyond the current tip are invisible.
+        io::copy(&mut prepared.suffix, &mut self.proof_index)?;
+        self.previous_tip = Some(self.tip);
+        self.tip = prepared.tip;
+        Ok(self.tip.height)
     }
 
     pub fn answer(&mut self, query: &Query) -> Answer {
@@ -226,7 +278,9 @@ impl ReadSnapshot {
     }
 
     fn state_node(&self, selector: &StateNodeSelector) -> Option<Answer> {
-        if (selector.height, selector.root) != (self.tip.height, self.tip.state_root)
+        let matches =
+            |tip: ParentPoint| (selector.height, selector.root) == (tip.height, tip.state_root);
+        if (!matches(self.tip) && !self.previous_tip.is_some_and(matches))
             || verify_state_node_ancestry(selector.root, selector.hash, &selector.ancestry).is_err()
         {
             return None;
@@ -237,13 +291,86 @@ impl ReadSnapshot {
     }
 }
 
+impl SnapshotRefresh {
+    pub(in super::super) fn prepare(
+        self,
+        max_nodes: NonZeroUsize,
+        deadline: Instant,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<Option<SnapshotAdvance>> {
+        let mut tip = self.parent;
+        let mut suffix: Option<BufWriter<fs::File>> = None;
+        while let Some(next) = tip.height.checked_add(1) {
+            ensure!(
+                !cancelled.load(Ordering::Relaxed),
+                "snapshot refresh stopped"
+            );
+            ensure!(
+                Instant::now() < deadline,
+                "snapshot refresh deadline elapsed"
+            );
+            let bytes = match read_cache_file(
+                &header_path(&self.headers, next),
+                finalized_header::MAX_BYTES,
+            ) {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+                Err(error) => return Err(error).context("reading cached snapshot successor"),
+            };
+            ensure!(
+                next - self.first_height < MAX_DIGEST_INDEX_BYTES / 32,
+                "snapshot digest index exceeds 256 MiB; use a nearer trusted anchor"
+            );
+            tip = self.verifier.verify_header(&bytes, &tip)?.point();
+            ensure!(tip.height == next, "cached header height mismatch");
+            if let Some(minimum) = self.minimum {
+                minimum.check(tip)?;
+            }
+            let writer = match &mut suffix {
+                Some(writer) => writer,
+                None => suffix.insert(BufWriter::new(tempfile::tempfile()?)),
+            };
+            writer.write_all(&Sha256::digest(bytes))?;
+        }
+        let Some(suffix) = suffix else {
+            return Ok(None);
+        };
+        let nodes = SnapshotNodes {
+            directory: self.nodes,
+            verify_deadline: Some(deadline),
+            cancelled: Some(cancelled),
+        };
+        visit_state_leaves(&nodes, tip.state_root, max_nodes.get(), &mut |_, _| Ok(()))
+            .context("verifying complete successor snapshot state")?;
+        checkpoint_validity(self.minimum, wall_ms()?)?;
+        ensure!(
+            Instant::now() < deadline,
+            "snapshot refresh deadline elapsed"
+        );
+        let mut suffix = suffix.into_inner()?;
+        suffix.rewind()?;
+        Ok(Some(SnapshotAdvance {
+            parent: self.parent,
+            tip,
+            suffix,
+        }))
+    }
+}
+
 struct SnapshotNodes {
     directory: PathBuf,
     verify_deadline: Option<Instant>,
+    cancelled: Option<Arc<AtomicBool>>,
 }
 
 impl StateNodeReader for SnapshotNodes {
     fn read_node(&self, hash: &NodeHash) -> Result<Option<Vec<u8>>> {
+        ensure!(
+            self.cancelled
+                .as_ref()
+                .is_none_or(|stop| !stop.load(Ordering::Relaxed)),
+            "snapshot refresh stopped"
+        );
         ensure!(
             self.verify_deadline.is_none_or(|end| Instant::now() < end),
             "snapshot verification deadline elapsed"

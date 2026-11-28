@@ -2,6 +2,118 @@ use super::*;
 use crate::native_pipeline::state::tree::state_node_children;
 
 #[test]
+#[ignore = "requires the independently verified original H1 and H2 headers and state caches"]
+fn resident_snapshot_advances_only_after_the_complete_certified_successor() -> Result<()> {
+    let fixture = PathBuf::from(
+        std::env::var_os("NOVOVM_SNAPSHOT_REFRESH_FIXTURE").context("snapshot fixture path")?,
+    );
+    let profile_path = fixture.join("profile.json");
+    let pin = format!("{:x}", Sha256::digest(fs::read(&profile_path)?));
+    let budget = NonZeroUsize::new(97).unwrap();
+    let deadline = || Instant::now() + std::time::Duration::from_secs(60);
+    let complete = ReadSnapshot::open(
+        &fixture.join("device"),
+        &profile_path,
+        &pin,
+        2,
+        budget,
+        deadline(),
+    )?;
+    let scratch = tempfile::tempdir()?;
+    let data = scratch.path().canonicalize()?;
+    let profile = read_installed_profile(&profile_path, Some(&pin))?;
+    let (_, anchor) = profile.verification_domain()?;
+    let headers = checkpoint_root_in(&data, &profile, anchor)?;
+    let nodes = headers.join("state-nodes");
+    fs::create_dir_all(&nodes)?;
+    for height in (anchor.height + 1)..=1 {
+        fs::copy(
+            header_path(&complete.headers, height),
+            header_path(&headers, height),
+        )?;
+    }
+    let successor_root = format!("{}.node", hex(&complete.tip.state_root));
+    for file in fs::read_dir(&complete.nodes.directory)? {
+        let file = file?;
+        if file.file_name() != std::ffi::OsStr::new(&successor_root) {
+            fs::copy(file.path(), nodes.join(file.file_name()))?;
+        }
+    }
+    let mut serving = ReadSnapshot::open(&data, &profile_path, &pin, 1, budget, deadline())?;
+    let before = serving.answer(&Query::Status);
+    let Answer::Status(old) = before else {
+        panic!("verified H1 missing");
+    };
+    assert_eq!(old.height, 1);
+    let running = Arc::new(AtomicBool::new(false));
+    assert!(serving
+        .refresh()
+        .prepare(budget, deadline(), running.clone())?
+        .is_none());
+    let target = header_path(&headers, 2);
+    let mut tampered = fs::read(header_path(&complete.headers, 2))?;
+    let last = tampered.last_mut().context("empty proof")?;
+    *last ^= 1;
+    fs::write(&target, tampered)?;
+    assert!(serving
+        .refresh()
+        .prepare(budget, deadline(), running.clone())
+        .is_err());
+    assert_eq!(serving.answer(&Query::Status), Answer::Status(old.clone()));
+    fs::copy(header_path(&complete.headers, 2), &target)?;
+    let missing = serving
+        .refresh()
+        .prepare(budget, deadline(), running.clone())
+        .err()
+        .context("incomplete successor accepted")?;
+    assert!(missing
+        .to_string()
+        .contains("complete successor snapshot state"));
+    assert_eq!(serving.answer(&Query::Status), Answer::Status(old.clone()));
+    fs::copy(
+        complete.nodes.directory.join(&successor_root),
+        nodes.join(&successor_root),
+    )?;
+    let prepare = |snapshot: &ReadSnapshot| {
+        snapshot
+            .refresh()
+            .prepare(budget, deadline(), running.clone())
+            .and_then(|value| value.context("verified successor missing"))
+    };
+    let fresh = prepare(&serving)?;
+    let stale = prepare(&serving)?;
+    assert_eq!(serving.advance(fresh)?, 2);
+    assert!(serving.advance(stale).is_err());
+    assert_eq!(
+        serving.answer(&Query::Status),
+        Answer::Status(complete.status())
+    );
+    for point in [
+        serving.tip,
+        serving.previous_tip.context("previous snapshot missing")?,
+    ] {
+        assert!(matches!(
+            serving.answer(&Query::StateNode(StateNodeSelector {
+                height: point.height,
+                root: point.state_root,
+                hash: point.state_root,
+                ancestry: vec![],
+            })),
+            Answer::StateNode(_)
+        ));
+    }
+    assert!(matches!(
+        serving.answer(&Query::FinalizedHeader(ArchiveSelector {
+            height: 2,
+            offset: 0,
+            digest: [0; 32],
+        })),
+        Answer::FinalizedHeader(_)
+    ));
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires a copied height-42 follow-state cache and pinned test profile"]
 fn authentic_height_42_cache_answers_only_certified_read_queries() -> Result<()> {
     let data =

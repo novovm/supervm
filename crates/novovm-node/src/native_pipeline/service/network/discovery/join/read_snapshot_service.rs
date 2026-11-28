@@ -1,6 +1,7 @@
 //! Explicit read-only serving using the installed Client identity.
 mod local_locator;
 mod publication;
+use super::chain_sync::read_snapshot::ReadSnapshot;
 use super::{
     bind_carrier, client_identity, fingerprint, installed_state_base, profile_base,
     read_installed_profile, state_path, wall_ms,
@@ -27,7 +28,10 @@ use std::{
     num::NonZeroUsize,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::{mpsc, Arc},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc, Arc, Mutex,
+    },
     task::Poll,
     time::{Duration, Instant},
 };
@@ -68,7 +72,7 @@ pub fn serve_installed_public_read_snapshot(
     )
 }
 
-/// Serve an explicitly selected verified cache until stopped or its checkpoint expires.
+/// Serve the selected verified cache and advance as verified successors arrive.
 pub fn run_installed_public_read_snapshot(
     profile_path: &Path,
     profile_sha256: &str,
@@ -132,7 +136,7 @@ fn serve_snapshot(
     );
     let pins = profile.pins();
     let identity = client_identity(&data, profile_base(profile_path)?, &profile, false)?;
-    let mut snapshot = super::chain_sync::read_snapshot::ReadSnapshot::open(
+    let snapshot = ReadSnapshot::open(
         &data,
         profile_path,
         profile_sha256,
@@ -175,8 +179,13 @@ fn serve_snapshot(
             };
             let owner = bind_carrier(carrier).await?;
             let (requests, reads) = mpsc::sync_channel::<Read>(1);
+            let snapshot = Arc::new(Mutex::new(snapshot));
+            let reader = snapshot.clone();
             let worker = tokio::task::spawn_blocking(move || {
                 while let Ok(read) = reads.recv() {
+                    let Ok(mut snapshot) = reader.lock() else {
+                        break;
+                    };
                     let _ = read.answer.send(snapshot.answer(&read.request.query));
                 }
             });
@@ -188,16 +197,24 @@ fn serve_snapshot(
                 slot: Some(Arc::new(admissions)),
                 peers: None,
             };
+            let serving_height = AtomicU64::new(height);
+            let refresh_stopped = Arc::new(AtomicBool::new(false));
             let served =
                 if let Some(publication) = publication {
                     owner.with_relay_only_service_v1(async |scope| {
                     let deadline = duration.map(|duration| Instant::now() + duration);
-                    let publish = publication.run(scope, &identity, pins, height, deadline);
+                    let publish = publication.run(
+                        scope, &identity, pins, || serving_height.load(Ordering::Acquire), deadline,
+                    );
+                    let refresh = refresh_resident_snapshot(
+                        &snapshot, &serving_height, max_state_nodes, refresh_stopped.clone(),
+                    );
                     tokio::select! {
                         biased;
                         result = wait_for_stop(stop.as_mut()) => result,
                         result = publish => result,
                         result = serve(scope, identity.clone(), pins, ingress, None) => result,
+                        result = refresh, if duration.is_none() => result,
                     }
                 }).await
                 } else {
@@ -225,17 +242,71 @@ fn serve_snapshot(
                 )
                 .await
                 };
+            refresh_stopped.store(true, Ordering::Relaxed);
             let closed = owner.close().await;
             worker.await.context("snapshot query worker failed")?;
             served.and(closed)?;
             if duration.is_none() {
                 println!(
                     "{}",
-                    serde_json::json!({"event":"public_read_stopped", "height":height})
+                    serde_json::json!({
+                        "event":"public_read_stopped", "height":serving_height.load(Ordering::Acquire)
+                    })
                 );
             }
             Ok(())
         })
+}
+
+async fn refresh_resident_snapshot(
+    snapshot: &Mutex<ReadSnapshot>,
+    serving_height: &AtomicU64,
+    max_state_nodes: NonZeroUsize,
+    stopped: Arc<AtomicBool>,
+) -> Result<()> {
+    loop {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        let candidate = snapshot
+            .lock()
+            .map_err(|_| anyhow::anyhow!("snapshot reader lock poisoned"))?
+            .refresh();
+        let cancelled = stopped.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            candidate.prepare(
+                max_state_nodes,
+                Instant::now() + Duration::from_secs(300),
+                cancelled,
+            )
+        })
+        .await
+        .context("snapshot refresh worker failed")?;
+        match result {
+            Ok(Some(prepared)) => {
+                let old_height = serving_height.load(Ordering::Acquire);
+                let advanced = snapshot
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("snapshot reader lock poisoned"))?
+                    .advance(prepared);
+                let height = match advanced {
+                    Ok(height) => height,
+                    Err(error) => {
+                        eprintln!("public snapshot refresh deferred: {error:#}");
+                        continue;
+                    }
+                };
+                serving_height.store(height, Ordering::Release);
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "event":"public_read_snapshot_advanced", "previous_height":old_height,
+                        "height":height,
+                    })
+                );
+            }
+            Ok(None) => {}
+            Err(error) => eprintln!("public snapshot refresh deferred: {error:#}"),
+        }
+    }
 }
 
 fn stop_requested(path: &Path) -> Result<bool> {

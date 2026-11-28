@@ -67,7 +67,7 @@ impl<'a> Publication<'a> {
         scope: &IrohScopeV1,
         identity: &TransportIdentity,
         pins: Pins,
-        height: u64,
+        height: impl Fn() -> u64,
         deadline: Option<Instant>,
     ) -> Result<()> {
         let instance = rand::random();
@@ -185,7 +185,7 @@ impl<'a> Publication<'a> {
                     println!(
                         "{}",
                         serde_json::json!({
-                            "event":"public_read_lease_published", "height":height,
+                            "event":"public_read_lease_published", "height":height(),
                             "transport_identity_sha256":fingerprint(identity.public_key()),
                             "sequence":record.sequence, "expires_at_ms":expires,
                             "acknowledged_sources":accepted,
