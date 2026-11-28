@@ -216,8 +216,16 @@ try {
     Start-ScheduledTask -TaskName $newTaskName
     $newProgress = Join-Path $logs.FullName 'progress.json'
     $deadline = [DateTime]::UtcNow.AddSeconds(60)
-    while (!(Test-Path -LiteralPath $newProgress) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 500 }
-    $current = Read-Progress $newProgress
+    # The native owner also publishes progress while recovering its original store.
+    while ($true) {
+        try {
+            $current = Read-Progress $newProgress
+            break
+        } catch {
+            if ([DateTime]::UtcNow -ge $deadline) { throw }
+            Start-Sleep -Milliseconds 500
+        }
+    }
     $running = Get-Node
     $listeners = @((Get-NetUDPEndpoint -OwningProcess $running.ProcessId).LocalPort)
     $module = @((Get-Process -Id $running.ProcessId).Modules | Where-Object ModuleName -eq 'aoem_ffi.dll')
