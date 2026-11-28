@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ReleaseManifestSha256,
     [ValidateSet('Install','Plan','StopPublicRead')][string]$Action = 'Install',
     [string]$PackageRoot = (Join-Path $PSScriptRoot '..\..\..'),
+    [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$RenewProfileFromManifestSha256,
     [UInt64]$PublicReadSnapshotHeight,
     [UInt64]$PublicReadMaxStateNodes
 )
@@ -54,6 +55,43 @@ function Install-ClientFiles([string]$Source, [string]$Destination, $Files) {
     }
     foreach ($entry in $Files.GetEnumerator()) {
         Assert-ClientFile $Destination $entry.Key $entry.Value
+    }
+}
+
+function Get-PreviousFollower([string]$Release, [string]$Pin, $Files, $Document, [string]$EntryPoint, [string]$ProfileEntry) {
+    Assert-ClientFile $Release 'release-manifest.json' $Pin
+    $previous = Get-Content -Raw -LiteralPath (Join-Path $Release 'release-manifest.json') | ConvertFrom-Json
+    if ($previous.target -cne 'x86_64-pc-windows-msvc') { throw 'Previous release is not a Windows x64 Client.' }
+    $previousRuntime = @($previous.artifacts | Where-Object path -clike 'aoem/windows/core/bin/*')
+    if ($previousRuntime.Count -ne @($Files.Keys | Where-Object { $_ -clike 'aoem/windows/core/bin/*' }).Count) {
+        throw 'Profile renewal requires the same AOEM runtime inventory.'
+    }
+    $previousProfilePin = Get-ArtifactPin $previous $ProfileEntry
+    Assert-ClientFile $Release $ProfileEntry $previousProfilePin
+    foreach ($name in $Files.Keys) {
+        if ($name -in @('release-manifest.json', $ProfileEntry)) { continue }
+        if ((Get-ArtifactPin $previous $name) -ne $Files[$name]) {
+            throw 'Profile renewal requires the installed Client, AOEM and locator files.'
+        }
+    }
+    $profile = Join-Path $Release $ProfileEntry
+    $before = Get-Content -Raw -LiteralPath $profile | ConvertFrom-Json
+    $oldCheckpoint = $before.verification.minimum_finalized_checkpoint
+    $newCheckpoint = $Document.verification.minimum_finalized_checkpoint
+    $oldExpiry = $oldCheckpoint.valid_until_unix_ms
+    $newExpiry = $newCheckpoint.valid_until_unix_ms
+    if ($oldExpiry -isnot [ValueType] -or $newExpiry -isnot [ValueType] -or $newExpiry -le $oldExpiry) {
+        throw 'Profile renewal requires a later expiry for the same pinned checkpoint.'
+    }
+    $oldCheckpoint.valid_until_unix_ms = $newExpiry
+    if (($before | ConvertTo-Json -Depth 100 -Compress) -cne ($Document | ConvertTo-Json -Depth 100 -Compress)) {
+        throw 'Profile renewal must only extend the same pinned checkpoint.'
+    }
+    $program = Join-Path $Release $EntryPoint
+    [pscustomobject]@{
+        Execute = $program
+        WorkingDirectory = Split-Path -Parent $program
+        Arguments = '"' + $profile + '" follow-state ' + $previousProfilePin
     }
 }
 
@@ -143,6 +181,10 @@ if (($fixedStart -and (!$publicRead -or !$PublicReadSnapshotHeight)) -or
     throw 'Public reading requires a positive state node limit and, if specified, a positive finalized height.'
 }
 if ($Action -eq 'StopPublicRead' -and !$publicRead) { throw 'Specify the installed public read settings.' }
+if ($RenewProfileFromManifestSha256 -and (!$installedRelease -or $publicRead -or
+    $Action -eq 'StopPublicRead' -or $RenewProfileFromManifestSha256 -eq $manifestHash)) {
+    throw 'Profile renewal requires a distinct installed ordinary Client and a bundled profile.'
+}
 $arguments = $followArguments
 $stopMarker = $null
 if ($publicRead) {
@@ -174,7 +216,9 @@ if ($Action -eq 'Install') {
 }
 
 $existing = Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue
+if ($RenewProfileFromManifestSha256 -and !$existing) { throw 'Installed Client task is required for profile renewal.' }
 $switchToPublicRead = $false
+$previousAction = $null
 if ($existing) {
     # CIM can abbreviate the account name, even when exported by InputObject.
     # Export by name and path to read the registered principal identifier.
@@ -195,12 +239,23 @@ if ($existing) {
     }
     if ($sid -ne $identity.User.Value -or [int]$existing.Principal.LogonType -ne 3 -or
         [int]$existing.Principal.RunLevel -ne 0 -or @($existing.Actions).Count -ne 1 -or
-        $existing.Actions[0].Execute -ne $program -or
-        $existing.Actions[0].WorkingDirectory -ne $directory -or @($existing.Triggers).Count -ne 1 -or
+        @($existing.Triggers).Count -ne 1 -or
         $existing.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') {
         throw 'Existing task uses different startup settings. Preserve and review it before replacing it.'
     }
-    if ($existing.Actions[0].Arguments -cne $arguments) {
+    $currentAction = $existing.Actions[0]
+    if ($currentAction.Execute -ne $program -or $currentAction.WorkingDirectory -ne $directory) {
+        if (!$RenewProfileFromManifestSha256 -or $existing.State -notin @('Ready','Running')) {
+            throw 'Existing task uses different startup settings. Preserve and review it before replacing it.'
+        }
+        $previousRelease = Join-Path (Split-Path -Parent $installedRelease) $RenewProfileFromManifestSha256.ToLowerInvariant()
+        $previousAction = Get-PreviousFollower $previousRelease $RenewProfileFromManifestSha256 $files $document $entryPoint $profileEntry
+        if ($currentAction.Execute -ne $previousAction.Execute -or
+            $currentAction.WorkingDirectory -ne $previousAction.WorkingDirectory -or
+            $currentAction.Arguments -cne $previousAction.Arguments) {
+            throw 'Existing task does not match the pinned previous ordinary Client.'
+        }
+    } elseif ($currentAction.Arguments -cne $arguments) {
         $switchToPublicRead = $Action -eq 'Install' -and $publicRead -and
             $existing.State -eq 'Ready' -and $existing.Actions[0].Arguments -ceq $followArguments
         if (!$switchToPublicRead) {
@@ -232,10 +287,26 @@ if ($marker) {
     Remove-Item -LiteralPath $stopMarker
 }
 if ($installedRelease) { Install-ClientFiles $root $installedRelease $files }
-if (!$existing -or $switchToPublicRead) {
+if (!$existing -or $switchToPublicRead -or $previousAction) {
     $nativeAction = New-ScheduledTaskAction -Execute $program -Argument $arguments -WorkingDirectory $directory
 }
-if ($switchToPublicRead) {
+if ($previousAction) {
+    if ($existing.State -eq 'Running') { Stop-ScheduledTask -TaskName $taskName -TaskPath '\' }
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $current = Get-ScheduledTask -TaskName $taskName -TaskPath '\'
+        if ($current.State -ne 'Running') { break }
+        if ([DateTime]::UtcNow -ge $deadline) { throw 'The previous Client did not stop for profile renewal.' }
+        Start-Sleep -Milliseconds 250
+    } while ($true)
+    if ($current.State -ne 'Ready' -or @($current.Actions).Count -ne 1 -or
+        $current.Actions[0].Execute -ne $previousAction.Execute -or
+        $current.Actions[0].WorkingDirectory -ne $previousAction.WorkingDirectory -or
+        $current.Actions[0].Arguments -cne $previousAction.Arguments) {
+        throw 'The previous Client task changed during profile renewal.'
+    }
+}
+if ($switchToPublicRead -or $previousAction) {
     Set-ScheduledTask -TaskName $taskName -TaskPath '\' -Action $nativeAction | Out-Null
 }
 if (!$existing) {
@@ -247,5 +318,7 @@ if (!$existing) {
     Register-ScheduledTask -TaskName $taskName -TaskPath '\' -Action $nativeAction -Trigger $trigger `
         -Principal $principal -Settings $settings -Description 'NOVOVM installed-client verified state synchronization' | Out-Null
 }
-if (-not $existing -or $existing.State -ne 'Running') { Start-ScheduledTask -TaskName $taskName -TaskPath '\' }
+if (-not $existing -or $existing.State -ne 'Running' -or $previousAction) {
+    Start-ScheduledTask -TaskName $taskName -TaskPath '\'
+}
 $plan | ConvertTo-Json
