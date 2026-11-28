@@ -218,6 +218,18 @@ C 在本机回环使用独立链 `7135010934` 和四个实际 Windows 节点进�
 
 复验沿原 `weighted_pair_pending_once_and_existing_outbox` 回归，设置 `NOVOVM_RESIDENT_NODE_BINARY`、`NOVOVM_WEIGHTED_RECOVERY_REPLACEMENT_BINARY`、`NOVOVM_AOEM_TEST_LIBRARY` 和新的 `NOVOVM_WEIGHTED_RECOVERY_DIRECTORY`，再运行 `cargo test --locked --release -p novovm-node --lib --features iroh-transport weighted_pair_pending_once_and_existing_outbox -- --ignored --nocapture --test-threads 1`。报告 SHA-256 为 `5477049a1a32780adc1286dde58c282e6a6c455b0b3fd4a77f146dfbe0fc3ee3`。证据覆盖这两份 Windows 程序在该隔离链上的法定投票、旧库恢复和回执回读。A、B、D 的现役版本以及四机原链联合窗口仍待验收。
 
+#### D 的现役版本与候选版本隔离兼容性
+
+D 于 10:33:43 UTC 确认现役仍为 PID `2488` 并继续监听原端口。普通权限仍无法取得最新进度或签票。C 在等同摘要的本机原归档中提取 D 版 `654b9991`，程序 SHA-256 `04a0e0b174bc9de1fa7cd71eb8aff54b06ad670fa0b407c0e75394e46a7e3ee4` 与 D 的现役取证和本轮包清单一致。候选复用 `90991c4e` Windows 节点、相同 AOEM，直接使用上次编译的回归程序。
+
+独立链 `7569262084` 的旧版节点在权重 `3/7` 时持续 12.041 秒保持未确认。恢复总权重 `5/7` 后，`654b9991` 与 `90991c4e` 各自签票并在 H2/R2 生成一致区块、状态根与回执。四端落盘的 Precommit QC 均为权重 `5/7`。恢复旧版程序后，同一测试库和身份仍能读出这笔回执。报告 SHA-256 为 `166e1c8e0a91a0c31e7c530b36bb9728951afe38504f0f98f47b16dbf7cf2d1f`。C 现役仍为 PID `5124`。D 最新原链签票和四机同一生产配置仍待核验。
+
+#### B 的现役 Linux 版本与候选版本隔离兼容性
+
+A 使用 `b34ce423` 的同一回归在本机回环运行四个 Linux 节点，独立链 `7087732816`。B 旧版 `1b6808f6` 的节点文件 SHA-256 为 `5e5cefa16f47fbabe9fb8b9b9caa07039588b1518b3309528159a24836f67e64`，与 B 现役进程摘要一致。候选 `90991c4e` 的节点摘要为 `f532d9d36e3ce460c4627cdc0d85f23a620a5ab87233abc153c91998a89de366`。两版共用 Linux AOEM，摘要 `21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231`。
+
+旧版在线权重 `3/7` 时，两笔已接收测试输入在 12.021 秒内保持未确认。候选以 `existing` 打开原测试库并使用原测试身份，和旧版节点合计权重 `5/7`，两笔输入在 H2/R1 确认。四端落盘 QC 的签者和权重一致，区块哈希、状态根与回执承诺一致。恢复旧程序后，同一测试库仍能读出链头和回执。A 回传报告 SHA-256 `34d13dac87517cecffaa8b2f4a3d841c211829958fe58910cb412e5d3618d374`，10:39:29 UTC 完成，测试进程均已退出。B、C 现役服务保持在线。本结果覆盖该 Linux 版本组合的隔离运行，联合部署仍待原链验证。
+
 ### 2026-11-28 A Windows 签收与切换资格
 
 C 经受限内网交付 `623b8629` Windows ZIP。A 复核整包摘要及全部 96 个成员，再用本机现役配置生成 `existing` 的 SCM `start --dry-run` 计划，退出 `0`，`applied=false`。原链、库和身份路径沿用现有值，原任务计划程序 PID `35976` 和配置摘要保持一致。A 的 SCM 验证覆盖离线计划。A 回执 SHA-256 为 `b8cbdd8f4f98426e625dae0de6224b9ad8b0952b60987ccc8ba41962cecacc95`。
