@@ -209,9 +209,9 @@ try {
     Copy-NetFirewallRule -Name $firewall.Name -NewName $newTaskName | Out-Null
     Get-NetFirewallRule -Name $newTaskName | Get-NetFirewallApplicationFilter | Set-NetFirewallApplicationFilter -Program $candidate
     $action = New-ScheduledTaskAction -Execute (Get-Command pwsh).Source -Argument ('-NoProfile -NonInteractive -File "' + (Join-Path $work (Split-Path -Leaf $PSCommandPath)) + '" -Owner') -WorkingDirectory $work
-    $owner = New-ScheduledTaskPrincipal -UserId $localService -LogonType ServiceAccount
+    $taskPrincipal = New-ScheduledTaskPrincipal -UserId $localService -LogonType ServiceAccount
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    Register-ScheduledTask -TaskName $newTaskName -Action $action -Principal $owner -Settings $settings | Out-Null
+    Register-ScheduledTask -TaskName $newTaskName -Action $action -Principal $taskPrincipal -Settings $settings | Out-Null
     $launchRequested = $true
     Start-ScheduledTask -TaskName $newTaskName
     $newProgress = Join-Path $logs.FullName 'progress.json'
