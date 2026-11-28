@@ -956,14 +956,11 @@ fn validate_native_config(
                 "health client must query managed local loopback UDP port",
             ));
         }
-        let expected_genesis = if native["uca_initialization"].is_null() {
-            &native["genesis"]["genesis_config_commitment"]
-        } else {
-            &native["uca_initialization"]["expected_final_commitment"]
-        };
-        if &client["genesis"] != expected_genesis {
+        // ResidentNode binds native queries to the consensus genesis commitment.
+        // The UCA final commitment pins the initialized asset state.
+        if client["genesis"] != native["genesis"]["genesis_config_commitment"] {
             return Err(bad(
-                "health client genesis differs from managed node final pin",
+                "health client genesis differs from managed node query domain",
             ));
         }
         let local_key = &client["node"]["public_key"];
