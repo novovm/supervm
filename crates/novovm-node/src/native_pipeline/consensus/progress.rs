@@ -6,7 +6,7 @@
 //! owner-bound durable candidates may authorize a value vote.
 
 use super::business_activation::{matches_configured, BusinessSchedule};
-use super::collector::{CollectorLimits, VoteCollector};
+use super::collector::{CollectorLimits, VoteCollector, VoteInsert};
 use super::journal::{CandidateLocator, ReplayEvidence, ReplayRecord, MAX_REPLAY_RECORDS};
 use super::message_evidence::{self, MessageDomain, VerifiedEvidence};
 use super::pacemaker::{Pacemaker, TimeoutPolicy};
@@ -31,6 +31,27 @@ use std::{
 };
 
 mod recovery;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum VoteAdmission {
+    Counted,
+    Duplicate,
+    RetainedRound,
+    ConsideredNextHeight,
+    IgnoredContext,
+}
+
+impl VoteAdmission {
+    pub(super) fn delivery_event(self) -> &'static str {
+        match self {
+            Self::Counted => "vote_counted",
+            Self::Duplicate => "vote_duplicate",
+            Self::RetainedRound => "vote_retained_round",
+            Self::ConsideredNextHeight => "vote_considered_next_height",
+            Self::IgnoredContext => "vote_ignored_context",
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct ProgressLimits {
@@ -634,7 +655,18 @@ impl RoundProgress {
     /// Invalid peer input is returned as an error, never freezes local signing.
     pub fn receive(&mut self, peer: Hash, message: &Message) -> Result<()> {
         let evidence = message_evidence::verify(message, &self.domain)?;
-        self.receive_verified(peer, message, evidence)
+        self.receive_verified(peer, message, evidence).map(|_| ())
+    }
+
+    pub(super) fn vote_rejection_event(&self, vote: &Vote) -> &'static str {
+        if !self.is_frozen()
+            && vote.context == self.context()
+            && vote.round < self.collector.lowest_retained_round()
+        {
+            "vote_rejected_retired_round"
+        } else {
+            "vote_rejected_progress"
+        }
     }
 
     /// NativeChannel already qualified the exact message. Reuse that fact, not
@@ -645,7 +677,7 @@ impl RoundProgress {
         peer: Hash,
         message: &Message,
         evidence: VerifiedEvidence,
-    ) -> Result<()> {
+    ) -> Result<Option<VoteAdmission>> {
         ensure!(!self.is_frozen(), "progress frozen");
         ensure!(
             self.domain
@@ -668,8 +700,8 @@ impl RoundProgress {
                 }
             }
             (Message::Vote(vote), VerifiedEvidence::Vote(verified)) => {
-                if vote.context == self.context() {
-                    self.collector.insert_verified(&verified)?;
+                let admission = if vote.context == self.context() {
+                    let inserted = self.collector.insert_verified(&verified)?;
                     crate::native_pipeline::profile::critical_event(
                         crate::native_pipeline::profile::CriticalEvent::VoteReceived,
                         vote.context.height,
@@ -677,13 +709,24 @@ impl RoundProgress {
                         vote.value,
                         None,
                     );
+                    match inserted {
+                        VoteInsert::Duplicate => VoteAdmission::Duplicate,
+                        VoteInsert::Inserted if vote.round == self.round() => {
+                            VoteAdmission::Counted
+                        }
+                        VoteInsert::Inserted => VoteAdmission::RetainedRound,
+                    }
                 } else if self.context().height.checked_add(1) == Some(vote.context.height) {
                     self.future_votes.retain(
                         self.context(),
                         self.limits.votes.max_future_round_span,
                         &verified,
                     )?;
-                }
+                    VoteAdmission::ConsideredNextHeight
+                } else {
+                    VoteAdmission::IgnoredContext
+                };
+                return Ok(Some(admission));
             }
             (
                 Message::Proposal { body_id, .. },
@@ -779,7 +822,7 @@ impl RoundProgress {
                 anyhow::bail!("progress expects qualified consensus control, not body/network work")
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     fn retain_future_offer(&mut self, peer: Hash, offer: Offered) {

@@ -76,12 +76,42 @@ fn native_progress_algebraic_three_heights_with_unresolved_restart() -> Result<(
 #[test]
 #[ignore = "real AOEM journal; exercise exact nil recovery through the original round timer and ACK"]
 fn native_nil_precommit_recovery_requires_quorum_and_advances_only_after_ack() -> Result<()> {
+    use crate::native_pipeline::consensus::{
+        message_evidence, progress::VoteAdmission, wire::Vote,
+    };
     use novovm_consensus::round_bft::{test_vectors::sign_vote, wire::Quorum};
 
     let mut f = fixture(ExecutionBackend::CpuCallbacks)?;
     let journal = &mut f.drivers[0];
     let pipeline = &f.services.0[0];
     let round = journal.round();
+    let prevote = |at_round| {
+        sign_vote(
+            f.genesis,
+            at_round,
+            Phase::Prevote,
+            None,
+            &f.set,
+            &f.keys[1],
+        )
+    };
+    let domain = MessageDomain {
+        chain_id: f.genesis.chain_id,
+        genesis: f.genesis.genesis_config_commitment,
+        protocol: f.genesis.protocol_commitment,
+        validators: f.set.clone(),
+    };
+    let receive = |driver: &mut RoundProgress, vote: &Vote| {
+        let message = Message::Vote(vote.clone());
+        let evidence = message_evidence::verify(&message, &domain)?;
+        driver.receive_verified(f.ids[1], &message, evidence)
+    };
+    let current = prevote(round)?;
+    ensure!(receive(journal, &current)? == Some(VoteAdmission::Counted));
+    ensure!(receive(journal, &current)? == Some(VoteAdmission::Duplicate));
+    ensure!(journal.consensus_diagnostic(Instant::now())["prevote"]["verified_weight"] == 1);
+    ensure!(receive(journal, &prevote(round + 1)?)? == Some(VoteAdmission::RetainedRound));
+    ensure!(journal.consensus_diagnostic(Instant::now())["prevote"]["verified_weight"] == 1);
     let certificate = |at_round| {
         Quorum::from_votes(
             &f.set,
@@ -130,6 +160,8 @@ fn native_nil_precommit_recovery_requires_quorum_and_advances_only_after_ack() -
         std::thread::yield_now();
     }
     ensure!(journal.round() == round + 1 && journal.head().is_none());
+    ensure!(receive(journal, &current).is_err());
+    ensure!(journal.vote_rejection_event(&current) == "vote_rejected_retired_round");
     let next_round = journal.consensus_diagnostic(now + Duration::from_secs(6));
     ensure!(next_round["propose"]["timer_armed"] == false);
     ensure!(next_round["propose"]["remaining_us"].is_null());

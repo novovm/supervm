@@ -55,6 +55,10 @@ C 独立复算并检查了 A 保存的 12 次认证读取。03:31:56–03:32:06 
 
 复测时保留两端常驻进度文件的多次原始快照。新版的 `consensus_diagnostic.local_progress.propose` 在本地单调时钟上报告当前高度和轮次的提议计时器，包括当前阶段是否适用、是否已启动、是否到期及剩余微秒数。结合同时采到的提议人、签票权重、认证路径和 journal 状态，可区分计时器等待与消息未入账。换轮后首次轮询前没有新轮次计时值。Windows 定向回归以真实 AOEM 覆盖原 journal ACK、时钟到期和待处理提议先于超时两种顺序，四项通过。测试日志 SHA-256 为 `3e345302c663981831dacbd74dd9d183139d29563fd9b1475e6ab7b1ac17ece4`。
 
+使用现有 `NOVOVM_PROFILE_NATIVE_DELIVERY=1` 观察签票时，按 `native_delivery.events` 中的 `fragment` 关联发送端、接收端的 `received` 和接收结果。`peer` 表示本条认证传输的直接对端，投票签名者仍以原票为准。`vote_rejected_evidence` 表示已解码的原票未通过证据校验。`vote_counted` 表示当前轮新增权重，`vote_duplicate` 表示签者权重没有因重复票增加。`vote_retained_round`、`vote_considered_next_height` 和 `vote_ignored_context` 分别表示其他轮暂存、先处理下一高度的输入、忽略不匹配的上下文。`vote_rejected_retired_round` 表示已验票因轮次退休未入账，`vote_rejected_progress` 记录其他本地拒绝。缓冲只保留最近的 2,048 项，核对丢失计数和覆盖时段后再做归因。
+
+Windows release 的现有 AOEM 持久化回归核对了当前轮权重从零到一、重复票不增权、未来轮暂存和 journal ACK 后的退休轮拒收，日志 SHA-256 为 `e59fcbe7dfec4a20ecd7c28d96b25ae97a2532698dd22cb8030bcdfedde968e6`。原生传输的 19 项回归也通过，包括验签拒绝及远轮见证，日志 SHA-256 为 `2f0dfd1e98ab6b92b7c79a9ee91cf06dfc00ad1449f7e189479e9ae4f36dc30f`。本轮未部署到现役节点。D 原第 203 轮的历史接收结果仍无可关联的现场记录。
+
 ## 入口与交接材料
 
 入口为 scripts/novovm-distributed-validator-catchup.ps1，证据核对为 scripts/novovm-verify-distributed-validator-catchup.ps1。用同一 Windows x86_64 Node、AOEM、novovmctl 及本测试 harness。harness 来自以下构建输出的 novovm_node-* 测试可执行文件。按现有 Windows 原生构建说明加载 MSVC/SDK 和 RocksDB 缓存。记录源提交、工具链、功能和真实构建输出哈希。

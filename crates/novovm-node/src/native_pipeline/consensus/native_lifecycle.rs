@@ -86,6 +86,7 @@ struct Fanout {
 }
 struct Incoming {
     peer: usize,
+    fragment: Option<Hash>,
     message: Arc<Message>,
     evidence: VerifiedEvidence,
 }
@@ -196,6 +197,7 @@ impl NativeLifecycle {
         let evidence = self.channel.qualify_control_for_test(&message)?;
         self.pending[0] = Some(Incoming {
             peer,
+            fragment: None,
             message: Arc::new(message),
             evidence,
         });
@@ -945,6 +947,7 @@ impl NativeLifecycle {
                             );
                             self.pending[lane] = Some(Incoming {
                                 peer,
+                                fragment: Some(message.fragment_id),
                                 message: Arc::new(message.message),
                                 evidence: message.evidence,
                             });
@@ -1044,16 +1047,30 @@ impl NativeLifecycle {
                         | Message::Vote(_)
                         | Message::Decision { .. }
                         | Message::FarRoundWitness(_) => {
-                            if self
-                                .progress
-                                .receive_verified(
-                                    self.peers[peer],
-                                    &received.message,
-                                    received.evidence,
-                                )
-                                .is_err()
-                            {
+                            let result = self.progress.receive_verified(
+                                self.peers[peer],
+                                &received.message,
+                                received.evidence,
+                            );
+                            if result.is_err() {
                                 self.rejected_messages += 1;
+                            }
+                            if let (Message::Vote(vote), Some(fragment)) =
+                                (received.message.as_ref(), received.fragment)
+                            {
+                                let event = match result {
+                                    Ok(admission) => admission.map(|value| value.delivery_event()),
+                                    Err(_) => Some(self.progress.vote_rejection_event(vote)),
+                                };
+                                if let Some(event) = event {
+                                    crate::native_pipeline::profile::delivery_event(
+                                        event,
+                                        vote.context.height,
+                                        self.peers[peer],
+                                        fragment,
+                                        0,
+                                    );
+                                }
                             }
                         }
                         Message::Transactions { .. }

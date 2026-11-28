@@ -167,6 +167,7 @@ impl NativeLifecycle {
             ensure!(self.pending[1].is_none(), "body reference handoff occupied");
             self.pending[1] = Some(Incoming {
                 peer,
+                fragment: None,
                 message: reference.clone(),
                 evidence: VerifiedEvidence::None,
             });
@@ -193,6 +194,7 @@ impl NativeLifecycle {
         let evidence = self.channel.qualify_control_for_test(&message)?;
         self.pending[1] = Some(Incoming {
             peer,
+            fragment: None,
             message,
             evidence,
         });

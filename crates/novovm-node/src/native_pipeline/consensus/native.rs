@@ -897,7 +897,23 @@ impl NativeChannel {
                 !application || application_input(&message),
                 "application lane accepts only signed asset, registration or application inputs"
             );
-            let evidence = message_evidence::verify(&message, &self.domain)?;
+            let evidence = message_evidence::verify(&message, &self.domain).inspect_err(|_| {
+                if let transport::Message::Vote(vote) = &message {
+                    if let Some(peer) = self
+                        .link
+                        .peer_index(&complete.peer)
+                        .and_then(|index| self.validator_for_peer(index).ok())
+                    {
+                        profile::delivery_event(
+                            "vote_rejected_evidence",
+                            vote.context.height,
+                            peer,
+                            complete.id,
+                            0,
+                        );
+                    }
+                }
+            })?;
             Ok((message, evidence))
         })();
         let height = parsed
