@@ -1,5 +1,7 @@
 //! Short public read leases on the existing authenticated discovery RPC.
-use super::super::super::{query, DialCandidate, Exchange, Pins, PublicReadPublication};
+use super::super::super::{
+    query, BootstrapDialUnavailable, DialCandidate, Exchange, Pins, PublicReadPublication,
+};
 use super::super::{
     fingerprint, prepare_seed_candidates, read_seeds, seed_candidate, wall_ms, Profile,
     SeedCandidates,
@@ -14,6 +16,7 @@ use novovm_network::{
     product_service_lease::IrohServiceEndpointV1,
 };
 use std::{
+    future::Future,
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
@@ -24,6 +27,9 @@ use std::{
 // they already authenticated until the signed deadline.
 const SIGNED_LEASE: Duration = Duration::from_secs(120);
 const RENEW: Duration = Duration::from_secs(15);
+// Leave slack within the directory's 30-second TTL even when a responsive
+// source acknowledges the prior round early and this round near its deadline.
+const RENEWAL_ROUND_BUDGET: Duration = Duration::from_secs(12);
 const RETRY: Duration = Duration::from_secs(2);
 
 pub(super) struct Publication<'a> {
@@ -154,17 +160,12 @@ impl<'a> Publication<'a> {
                     self.resident.then_some(keys[0].as_slice()),
                     failures.clone(),
                 );
-                let wall_limit = turn + Duration::from_millis(expires - now);
+                let wall_limit =
+                    turn + RENEWAL_ROUND_BUDGET.min(Duration::from_millis(expires - now));
                 let limit = deadline.map_or(wall_limit, |end| end.min(wall_limit));
-                let (first, second) = tokio::join!(
-                    tokio::time::timeout_at(limit.into(), first),
-                    tokio::time::timeout_at(limit.into(), second),
-                );
+                let [first, second] = confirm_publications(limit, first, second).await;
                 let mut confirmed = Vec::new();
-                for (index, confirmation) in [second.ok().flatten(), first.ok().flatten()]
-                    .into_iter()
-                    .enumerate()
-                {
+                for (index, confirmation) in [second, first].into_iter().enumerate() {
                     if let Some((source, records)) = confirmation {
                         confirmed.push(source);
                         if let Some(record) = records.into_iter().find(|record| {
@@ -213,6 +214,18 @@ impl<'a> Publication<'a> {
     }
 }
 
+async fn confirm_publications<T>(
+    limit: Instant,
+    first: impl Future<Output = Option<T>>,
+    second: impl Future<Output = Option<T>>,
+) -> [Option<T>; 2] {
+    let (first, second) = tokio::join!(
+        tokio::time::timeout_at(limit.into(), first),
+        tokio::time::timeout_at(limit.into(), second),
+    );
+    [first.ok().flatten(), second.ok().flatten()]
+}
+
 fn eligible_routes(candidate: Option<SeedCandidates>, relays: &[String]) -> Vec<DialCandidate> {
     candidate
         .into_iter()
@@ -238,7 +251,7 @@ async fn publish_to_source(
     lookup: Option<&[u8]>,
     failures: Arc<NetworkFailures>,
 ) -> Option<(String, Vec<PeerSignedRelayRecordV1>)> {
-    for candidate in routes {
+    for (index, candidate) in routes.iter().enumerate() {
         let request = |keys| {
             query(
                 scope,
@@ -250,12 +263,22 @@ async fn publish_to_source(
                 failures.clone(),
             )
         };
-        let result = request(lookup.map(<[u8]>::to_vec).into_iter().collect()).await;
-        let result = match result {
-            Err(_) if lookup.is_some() => request(Vec::new()).await,
-            value => value,
+        let attempt = async {
+            let result = request(lookup.map(<[u8]>::to_vec).into_iter().collect()).await;
+            match result {
+                Err(error) if lookup.is_some() && !error.is::<BootstrapDialUnavailable>() => {
+                    request(Vec::new()).await
+                }
+                value => value,
+            }
         };
-        if let Ok(found) = result {
+        // A stale learned coordinate cannot consume the pinned contact's turn.
+        let budget = if index + 1 < routes.len() {
+            RENEWAL_ROUND_BUDGET / 2
+        } else {
+            RENEWAL_ROUND_BUDGET
+        };
+        if let Ok(Ok(found)) = tokio::time::timeout(budget, attempt).await {
             return Some((fingerprint(&candidate.key), found.records));
         }
     }
@@ -336,7 +359,9 @@ mod tests {
                         sequence: 0,
                     };
                     let provider_key = provider.public_key().to_vec();
-                    let publish_route = candidate.clone();
+                    let mut stale_route = candidate.clone();
+                    stale_route.route.direct.clear();
+                    let publish_routes = [stale_route, candidate.clone()];
                     let publish_relay = relay.clone();
                     let signed = provider_owner
                         .with_continuous_service_v4(
@@ -368,19 +393,23 @@ mod tests {
                                         sequence: signed.sequence,
                                         expires_at_ms: signed.expires_at_ms,
                                     };
-                                    ensure!(
+                                    let [acknowledged, stalled] = confirm_publications(
+                                        Instant::now() + Duration::from_secs(9),
                                         publish_to_source(
                                             scope,
                                             &provider,
-                                            std::slice::from_ref(&publish_route),
+                                            &publish_routes,
                                             pins,
                                             lease,
                                             None,
-                                            Arc::new(NetworkFailures::default())
-                                        )
-                                        .await
-                                        .is_some(),
-                                        "publication not acknowledged"
+                                            Arc::new(NetworkFailures::default()),
+                                        ),
+                                        std::future::pending(),
+                                    )
+                                    .await;
+                                    ensure!(
+                                        acknowledged.is_some() && stalled.is_none(),
+                                        "healthy publication lost while the standby was stalled"
                                     );
                                     Ok(signed)
                                 })

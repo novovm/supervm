@@ -74,7 +74,9 @@ Windows 和 Linux 安装器默认持续同步。选用 Windows 的 `-PublicReadM
 只读供给。重启时会重新验证已有缓存，缓存有效即可恢复供给。前台可运行
 `novovm-native-client <profile> follow-state <profile-sha256> --public-read-max-state-nodes <节点数>`。
 供给复用本机通信身份，只经发行配置允许的中继公布短租约。它会
-认证引导、采纳该域内由对应固定公钥签署的更新坐标，并定期续租。
+认证引导、采纳该域内由对应固定公钥签署的更新坐标，并定期续租。两个引导并行接收
+同一份签名租约。每轮最多等待 12 秒，收到任一引导确认后按 15 秒周期续租。学习到的坐标
+与发行配置的固定联系人同时存在时，为固定联系人保留半轮拨号时间。
 
 加上 Windows 的 `-PublicReadSnapshotHeight <高度>` 或 Linux 的
 `--public-read-snapshot-height <高度>`，可从指定已验高度启动单独的常驻读取命令。
