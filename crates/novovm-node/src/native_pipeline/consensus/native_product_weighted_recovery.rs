@@ -76,6 +76,18 @@ fn weighted_pair_pending_once_and_existing_outbox() -> Result<()> {
         std::env::var_os("NOVOVM_RESIDENT_NODE_BINARY").context("explicit node binary required")?,
     )
     .canonicalize()?;
+    let replacement = std::env::var_os("NOVOVM_WEIGHTED_RECOVERY_REPLACEMENT_BINARY")
+        .map(|path| PathBuf::from(path).canonicalize())
+        .transpose()?;
+    let binary_sha256 = Sha256::digest(fs::read(&binary)?);
+    let replacement_sha256 = replacement
+        .as_ref()
+        .map(|path| fs::read(path).map(|bytes| Sha256::digest(bytes)))
+        .transpose()?;
+    ensure!(
+        replacement_sha256.as_ref() != Some(&binary_sha256),
+        "replacement must be a different executable"
+    );
     let chain = 7_000_000_000 + rand::random::<u64>() % 1_000_000_000;
     let keys = prepare_process_identities(chain)?;
     let validators: Vec<_> = WEIGHT
@@ -94,7 +106,8 @@ fn weighted_pair_pending_once_and_existing_outbox() -> Result<()> {
     let genesis = fixture_genesis(chain, validators)?;
     let mut evidence = json!({"completed":false,"chain":chain,"genesis":hex(&genesis.genesis_config_commitment),
         "roles":ROLE, "weights":WEIGHT,"validator_ids":ids.iter().map(|id|hex(id)).collect::<Vec<_>>(),
-        "node_sha256":hex(&Sha256::digest(fs::read(&binary)?)),"harness_sha256":hex(&Sha256::digest(fs::read(std::env::current_exe()?)?)),
+        "node_sha256":hex(&binary_sha256),"harness_sha256":hex(&Sha256::digest(fs::read(std::env::current_exe()?)?)),
+        "replacement_sha256":replacement_sha256.as_ref().map(|digest| hex(digest)),
         "aoem_sha256":hex(&Sha256::digest(fs::read(library()?)?)),"wallet_submissions":[]});
     let (mut nodes, set) = setup_with_identities(&directory, binary, genesis, 2, &keys)?;
     ensure!(
@@ -215,7 +228,14 @@ fn weighted_pair_pending_once_and_existing_outbox() -> Result<()> {
         stop_one(&mut nodes, 0)?;
         drop(clients.remove(0));
         phase(&nodes, &mut evidence, "strong_pair_C1_A2", started)?;
-        nodes.start(1, "existing")?;
+        if let Some(binary) = &replacement {
+            let original = std::mem::replace(&mut nodes.binary, binary.clone());
+            let launch = nodes.start(1, "existing");
+            nodes.binary = original;
+            launch?;
+        } else {
+            nodes.start(1, "existing")?;
+        }
         clients.push(client(1)?);
         let limit = Instant::now() + Duration::from_secs(90);
         recovery_status(&mut nodes, &mut clients[1], limit)?;
@@ -246,6 +266,19 @@ fn weighted_pair_pending_once_and_existing_outbox() -> Result<()> {
             receipts(&mut nodes, &mut clients, &all_ids)? == all_receipts,
             "reopened original receipts differ"
         );
+        if replacement.is_some() {
+            phase(&nodes, &mut evidence, "restore_A2_original_binary", started)?;
+            stop_one(&mut nodes, 1)?;
+            drop(clients.remove(1));
+            nodes.start(1, "existing")?;
+            clients.insert(1, client(1)?);
+            same_head(&wait_height(&mut nodes, &mut clients, 2)?, head)?;
+            ensure!(
+                receipts(&mut nodes, &mut clients, &all_ids)? == all_receipts,
+                "original executable could not read the replacement's receipts"
+            );
+            evidence["original_binary_reopened_replacement_store"] = json!(true);
+        }
         evidence["balances"] = json!(balances(&mut clients, &all_receipts, [200, 100])?);
         evidence["matching_heads"] = json!(heads);
         nodes.stop_all()?;

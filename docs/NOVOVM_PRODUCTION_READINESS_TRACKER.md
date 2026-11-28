@@ -210,6 +210,14 @@ A 于 10:13:24 UTC 签收 `90991c4e` Windows ZIP，整包、发行清单和全�
 
 Windows 和 Linux 候选清单均声明 `mixed_version_rolling_upgrade_supported=false`。C 的 `upgrade --dry-run` 因跨版本数据及协议兼容性未经验证而退出 `2`，诊断 SHA-256 `8778443be850652fe986f1142f7196ee3011e22bdb713250a734a07354fffb64`。原链最终性需要四份相等投票权中的三份。现役部署资格仍待跨版本验证及 D 当前投票可用性证据。本轮未执行服务切换。
 
+#### C 的现役版本与候选版本隔离兼容性
+
+C 在本机回环使用独立链 `7135010934` 和四个实际 Windows 节点进程。基线包 `1f59fcd5` 的节点文件摘要 `499475ccffd89b052d119cddcd0934484e655be9f7f1c70bd02fa5bac23958f8` 与 C 现役程序相同。候选包 `90991c4e` 的节点文件摘要为 `d79cd636f36c5432342ea0b1e93a18ba93602dc061cd7ee4f28774ddf98d3875`。两包使用同一 AOEM `f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa`。
+
+旧版在线权重为 `3/7` 时，已接收交易在 12.010 秒观察期内保持未确认。随后同一测试验证者切到候选程序，用原测试库和原测试身份以 `existing` 启动。候选贡献权重 `3`，旧版对端贡献 `2`，原测试交易自动达到门槛并在 H2/R2 提交。其余两个旧版进程从原测试库追到同一高度。四端各自落盘的 Precommit QC 均验得权重 `5/7`，区块、状态根和回执承诺一致。切换中的测试验证者恢复旧程序后，仍能从同一测试库读到一致的链头和回执。测试完成后隔离节点进程已结束，C 现役仍为 PID `5124`。
+
+复验沿原 `weighted_pair_pending_once_and_existing_outbox` 回归，设置 `NOVOVM_RESIDENT_NODE_BINARY`、`NOVOVM_WEIGHTED_RECOVERY_REPLACEMENT_BINARY`、`NOVOVM_AOEM_TEST_LIBRARY` 和新的 `NOVOVM_WEIGHTED_RECOVERY_DIRECTORY`，再运行 `cargo test --locked --release -p novovm-node --lib --features iroh-transport weighted_pair_pending_once_and_existing_outbox -- --ignored --nocapture --test-threads 1`。报告 SHA-256 为 `5477049a1a32780adc1286dde58c282e6a6c455b0b3fd4a77f146dfbe0fc3ee3`。证据覆盖这两份 Windows 程序在该隔离链上的法定投票、旧库恢复和回执回读。A、B、D 的现役版本以及四机原链联合窗口仍待验收。
+
 ### 2026-11-28 A Windows 签收与切换资格
 
 C 经受限内网交付 `623b8629` Windows ZIP。A 复核整包摘要及全部 96 个成员，再用本机现役配置生成 `existing` 的 SCM `start --dry-run` 计划，退出 `0`，`applied=false`。原链、库和身份路径沿用现有值，原任务计划程序 PID `35976` 和配置摘要保持一致。A 的 SCM 验证覆盖离线计划。A 回执 SHA-256 为 `b8cbdd8f4f98426e625dae0de6224b9ad8b0952b60987ccc8ba41962cecacc95`。
