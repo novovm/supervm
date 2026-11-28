@@ -24,6 +24,7 @@ use crate::native_pipeline::persistence::packet::{ReceiptProjection, ReceiptView
 use crate::native_pipeline::pipeline::{AdmissionInput, AdmittedTransfer};
 use crate::native_pipeline::report::record;
 use anyhow::{ensure, Context, Result};
+use novovm_protocol::native_query::ApplicationCommandStatusV1;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
@@ -470,7 +471,7 @@ pub struct RpcLifecycle {
     selection_diagnostic: Option<SelectionDiagnostic>,
     receipts: BTreeMap<Hash, ReceiptState>,
     // Same bounded recent-receipt projection, never application authority.
-    application_receipts: BTreeMap<Hash, Value>,
+    application_receipts: BTreeMap<Hash, ApplicationCommandStatusV1>,
     recent: VecDeque<Hash>,
     indexed_height: u64,
     warm_projection_blocks: u64,
@@ -1107,7 +1108,10 @@ impl RpcLifecycle {
             Some(block.context("decided block missing during RPC projection")?)
         };
         let point = block.as_ref().map_or(head, |block| block.point());
-        if let Some(block) = block.as_ref().filter(|block| block.stored().is_registration()) {
+        if let Some(block) = block
+            .as_ref()
+            .filter(|block| block.stored().is_registration())
+        {
             let [raw] = block.stored().raw_transactions() else {
                 anyhow::bail!("published registration must have one proof");
             };
@@ -1128,13 +1132,11 @@ impl RpcLifecycle {
             for index in 0..block.stored().receipt_bytes().len() {
                 let receipt = block.stored().application_receipt(index)?;
                 self.remove_application_pending(receipt.command_id);
-                self.application_receipts.insert(
+                self.record_application_status(
                     receipt.command_id,
-                    application::receipt_json(&receipt, point),
+                    application::finalized_status(receipt, point),
                 );
-                self.recent.push_back(receipt.command_id);
             }
-            self.trim_recent_receipts();
             self.indexed_height = point.height;
             self.archive_projection_blocks = self.archive_projection_blocks.saturating_add(1);
             self.archive = None;
@@ -2573,6 +2575,7 @@ mod tests {
                 admitted: None,
                 canonical_len: 7,
                 position: PendingPosition::Application(application::ApplicationPosition {
+                    replacement_grant_id: None,
                     grant_id: application,
                     expected_revision: 1,
                 }),
@@ -2638,6 +2641,7 @@ mod tests {
             admitted: None,
             canonical_len: 64,
             position: PendingPosition::Application(application::ApplicationPosition {
+                replacement_grant_id: None,
                 grant_id: [1; 32],
                 expected_revision: 0,
             }),

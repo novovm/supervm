@@ -281,7 +281,7 @@ pub(crate) fn candidate_request(
             uca_profile(context)?;
             ensure!(
                 if uca_registration::is_profile(context) {
-                    context.effect_contract == uca_registration::effect_contract(policy)?
+                    uca_registration::matches_profile(context, policy)?
                 } else if native_v4(context) {
                     native_v4_policy(context, policy)?
                 } else {
@@ -297,7 +297,7 @@ pub(crate) fn candidate_request(
         } => {
             if uca_registration::is_profile(context) {
                 ensure!(
-                    context.effect_contract == uca_registration::effect_contract(policy)?,
+                    uca_registration::matches_profile(context, policy)?,
                     "registration body policy mismatch"
                 );
                 if raw_transactions

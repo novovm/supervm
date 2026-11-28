@@ -5,10 +5,32 @@ use crate::native_pipeline::{
     service::client::operator::receipt_proof::Download,
 };
 use novovm_protocol::{
-    native_query::{IdentityStateV1, RegistrationStatusV1},
+    native_query::{ApplicationCommandStatusV1, IdentityStateV1, RegistrationStatusV1},
     uca_registration::{SignedUcaRegistrationV1, UcaRegistrationIntentV1, REGISTRATION_CONTEXT_V1},
 };
 mod concurrent;
+
+fn application_command_status(
+    nodes: &mut [rpc::RpcLifecycle],
+    client: &mut client::NativeApplicationClient,
+    command: &SignedApplicationGrantV1,
+) -> Result<ApplicationCommandStatusV1> {
+    let selector = Query::UcaApplicationCommand {
+        command_id: command.intent.command_id()?,
+    };
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        ensure!(
+            Instant::now() < deadline,
+            "application command status deadline"
+        );
+        match query(nodes, client, selector.clone())? {
+            Answer::UcaApplicationCommand(ApplicationCommandStatusV1::NotRecent) => continue,
+            Answer::UcaApplicationCommand(status) => return Ok(status),
+            answer => anyhow::bail!("unexpected application command answer: {answer:?}"),
+        }
+    }
+}
 
 pub(super) fn run(
     runtime: &AoemExecFacade,
@@ -62,6 +84,7 @@ pub(super) fn run(
     let reviewed = review_activation(&configs[0], runtime, &preceding, &header)?;
     assert_eq!(reviewed.subject().context, boundary);
     assert_eq!(reviewed.subject().parent_state_root, parent.state_root);
+    assert_eq!(reviewed.subject().next.semantic_version, 6);
     assert!(reviewed.assemble(vec![]).is_err());
     let mut corrupted = header.clone();
     *corrupted.last_mut().context("test archive empty")? ^= 1;
@@ -240,17 +263,57 @@ pub(super) fn run(
         assert_eq!(grant.expires_at_height, grant_height + 20);
     }
     let revoke_height = grant_height + 1;
-    let revoke = runtime.application_grant_signer_v1()?.sign(
-        ApplicationGrantIntentV1 {
-            expected_revision: 1,
-            valid_from_height: revoke_height,
-            action: ApplicationGrantActionV1::Revoke,
-            ..application.intent.clone()
+    let replacement_intent = ApplicationGrantIntentV1 {
+        expected_revision: 1,
+        valid_from_height: revoke_height,
+        action: ApplicationGrantActionV1::Authorize {
+            not_before_height: revoke_height,
+            expires_at_height: grant_height + 20,
         },
-        &key.public_key,
-        &key.expanded_secret_key,
-    )?;
-    send_application(&mut nodes, &mut clients[ingress], &revoke)?;
+        ..application.intent.clone()
+    };
+    let signer = runtime.application_grant_signer_v1()?;
+    let make_replacement = |device, revision| {
+        signer.sign(
+            replacement_intent
+                .clone()
+                .into_device_replacement(device, revision)?,
+            &key.public_key,
+            &key.expanded_secret_key,
+        )
+    };
+    let mut successor = selector.clone();
+    successor.device = [74; 32];
+    let mut alternative = selector.clone();
+    alternative.device = [75; 32];
+    missing_grant(&mut nodes, &mut clients, &successor, &published[0])?;
+    missing_grant(&mut nodes, &mut clients, &alternative, &published[0])?;
+    let stale = make_replacement(successor.device, 1)?;
+    send_application(&mut nodes, &mut clients[ingress], &stale)?;
+    assert_eq!(
+        application_command_status(&mut nodes, &mut clients[ingress], &stale)?,
+        ApplicationCommandStatusV1::Rejected
+    );
+    assert_eq!(heads(&mut nodes, &mut clients, grant_height, 0)?, published);
+    missing_grant(&mut nodes, &mut clients, &successor, &published[0])?;
+    for grant in grant_views(&mut nodes, &mut clients, &selector, grant_height)? {
+        assert_eq!(grant.revision, 1);
+        assert!(!grant.revoked);
+    }
+
+    let replacement = make_replacement(successor.device, 0)?;
+    let competing = make_replacement(alternative.device, 0)?;
+    let solo = std::slice::from_mut(&mut nodes[ingress]);
+    send_application(solo, &mut clients[ingress], &replacement)?;
+    assert_eq!(
+        application_command_status(solo, &mut clients[ingress], &replacement)?,
+        ApplicationCommandStatusV1::Received
+    );
+    send_application(solo, &mut clients[ingress], &competing)?;
+    assert_eq!(
+        application_command_status(solo, &mut clients[ingress], &competing)?,
+        ApplicationCommandStatusV1::Rejected
+    );
     let revoked = heads(&mut nodes, &mut clients, revoke_height, 0)?;
     assert_ne!(revoked[0].state_root, published[0].state_root);
     for grant in grant_views(&mut nodes, &mut clients, &selector, revoke_height)? {
@@ -258,6 +321,30 @@ pub(super) fn run(
         assert!(grant.revoked);
         assert_eq!(grant.state_root, revoked[0].state_root);
     }
+    for grant in grant_views(&mut nodes, &mut clients, &successor, revoke_height)? {
+        assert_eq!(grant.revision, 1);
+        assert!(!grant.revoked);
+        assert_eq!(grant.state_root, revoked[0].state_root);
+    }
+    missing_grant(&mut nodes, &mut clients, &alternative, &revoked[0])?;
+    let replacement_status =
+        application_command_status(&mut nodes, &mut clients[ingress], &replacement)?;
+    let ApplicationCommandStatusV1::Finalized {
+        ref receipt,
+        height,
+        block_hash,
+        state_root,
+    } = replacement_status
+    else {
+        anyhow::bail!("replacement did not finalize: {replacement_status:?}");
+    };
+    assert_eq!(
+        (height, block_hash, state_root),
+        (revoke_height, revoked[0].block_hash, revoked[0].state_root)
+    );
+    assert!(receipt.revoked);
+    assert_eq!((receipt.previous_revision, receipt.revision), (1, 2));
+    println!("UCA atomic device replacement on four stores: {replacement_status:?}; stale successor and competing replacement rejected");
 
     // The original authorization is still within its signed height window,
     // so rejection here depends on the published revision rather than expiry.
@@ -300,11 +387,25 @@ pub(super) fn run(
             query(&mut nodes, client, request.clone())?,
             Answer::UcaRegistration(expected)
         );
+        assert_eq!(
+            application_command_status(&mut nodes, client, &replacement)?,
+            replacement_status
+        );
+    }
+    for grant in grant_views(&mut nodes, &mut clients, &successor, final_height)? {
+        assert_eq!(grant.revision, 1);
+        assert!(!grant.revoked);
+        assert_eq!(grant.state_root, before_reopen[0].state_root);
+    }
+    for grant in grant_views(&mut nodes, &mut clients, &selector, final_height)? {
+        assert_eq!(grant.revision, 2);
+        assert!(grant.revoked);
+        assert_eq!(grant.state_root, before_reopen[0].state_root);
     }
     drop(clients);
     for node in nodes {
         node.node.shutdown()?;
     }
-    println!("Existing-store V5 activation, authorization, cold reopen and stale grant rejection verified on four validators");
+    println!("Existing-store V6 activation, atomic device replacement, cold reopen and stale grant rejection verified on four validators");
     Ok(())
 }

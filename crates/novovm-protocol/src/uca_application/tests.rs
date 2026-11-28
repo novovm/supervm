@@ -29,6 +29,34 @@ fn signed() -> SignedApplicationGrantV1 {
 }
 
 #[test]
+fn replacement_keeps_the_scope_and_compares_both_revisions() {
+    let mut old = intent();
+    old.expected_revision = 7;
+    let replacement = old.clone().into_device_replacement([8; 32], 2).unwrap();
+    let [revoke, authorize] = replacement.replacement_effects().unwrap();
+    assert_ne!(
+        replacement.signing_bytes().unwrap(),
+        revoke.signing_bytes().unwrap()
+    );
+    assert_eq!(revoke.selector, old.selector);
+    assert_eq!(revoke.expected_revision, 7);
+    assert_eq!(revoke.action, ApplicationGrantActionV1::Revoke);
+    let mut expected = old.clone();
+    expected.selector.device = [8; 32];
+    expected.expected_revision = 2;
+    assert_eq!(authorize, expected);
+    assert!(old
+        .clone()
+        .into_device_replacement(old.selector.device, 0)
+        .is_err());
+    assert!(old
+        .clone()
+        .into_device_replacement(old.issuer_key_ref, 0)
+        .is_err());
+    assert!(old.into_device_replacement([0; 32], 0).is_err());
+}
+
+#[test]
 fn observed_grant_rejects_superseded_sessions_and_revoked_devices() {
     use crate::native_query::{ApplicationGrantViewV1, IdentityStatusV1};
 

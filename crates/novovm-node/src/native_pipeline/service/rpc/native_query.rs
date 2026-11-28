@@ -26,7 +26,7 @@ impl RpcLifecycle {
 
     pub(super) fn receipt_status_json(&self, hash: Hash) -> Value {
         if let Some(receipt) = self.application_receipts.get(&hash) {
-            return receipt.clone();
+            return application::receipt_json(hash, receipt);
         }
         match self.recent_receipt(hash) {
             ReceiptState::Received => self.pending_status(hash),
@@ -172,6 +172,22 @@ impl RpcLifecycle {
                 Query::Status => unreachable!(),
                 Query::UcaRegistration { request_hash } => {
                     Answer::UcaRegistration(self.registrations.status(request_hash))
+                }
+                Query::UcaApplicationCommand { command_id } => {
+                    let status = self
+                        .application_receipts
+                        .get(command_id)
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            if self.pending.get(command_id).is_some_and(|entry| {
+                                matches!(entry.position, PendingPosition::Application(_))
+                            }) {
+                                ApplicationCommandStatusV1::Received
+                            } else {
+                                ApplicationCommandStatusV1::NotRecent
+                            }
+                        });
+                    Answer::UcaApplicationCommand(status)
                 }
                 Query::ConsensusProposal {
                     height,

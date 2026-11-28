@@ -12,7 +12,9 @@ use novovm_protocol::{
     native_query::{
         ApplicationGrantStateV1, ApplicationGrantViewV1, IdentityStatusV1, UcaIdentityViewV1,
     },
-    uca_application::{ApplicationGrantActionV1, ApplicationGrantSelectorV1},
+    uca_application::{
+        ApplicationGrantActionV1, ApplicationGrantIntentV1, ApplicationGrantSelectorV1,
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -129,18 +131,53 @@ impl ApplicationGrantAccessV1 {
         parent_root: NodeHash,
         execution_height: u64,
     ) -> Result<Vec<StateChange>> {
-        let record = self.transition_record(state, checked, parent_root, execution_height)?;
+        let record =
+            self.transition_record(state, checked.intent(), parent_root, execution_height)?;
         record_pages::record_changes(&self.prefix, &postcard::to_allocvec(&record)?, GRANT_BYTES)
+    }
+
+    pub(crate) fn preflight(
+        &self,
+        state: &OwnedStateInput,
+        checked: &CheckedApplicationGrantV1,
+        parent_root: NodeHash,
+        parent_height: u64,
+        native_registration: bool,
+    ) -> Result<()> {
+        let height = parent_height
+            .checked_add(1)
+            .context("application height exhausted")?;
+        let read = |access: &Self| {
+            access.read_under_rules(state, parent_root, parent_height, native_registration)
+        };
+        let previous = read(self)?;
+        if let Some([old, new]) = checked.intent().replacement_effects() {
+            self.transition_record(&previous, &old, parent_root, height)?;
+            let next = Self::new(new.selector.clone())?;
+            let ApplicationGrantActionV1::Authorize {
+                not_before_height, ..
+            } = new.action
+            else {
+                unreachable!("replacement successor is an authorization")
+            };
+            ensure!(
+                not_before_height <= height,
+                "replacement device must be active at execution height"
+            );
+            next.transition_record(&read(&next)?, &new, parent_root, height)?;
+        } else {
+            self.transition_record(&previous, checked.intent(), parent_root, height)?;
+        }
+        Ok(())
     }
 
     fn transition_record(
         &self,
         state: &ApplicationGrantObservationV1,
-        checked: &CheckedApplicationGrantV1,
+        intent: &ApplicationGrantIntentV1,
         parent_root: NodeHash,
         execution_height: u64,
     ) -> Result<GrantRecordV1> {
-        let intent = checked.intent();
         ensure!(
             intent.selector == self.selector && state.selector == self.selector,
             "application grant selector mismatch"
@@ -182,6 +219,9 @@ impl ApplicationGrantAccessV1 {
                     .context("cannot revoke missing application grant")?;
                 ensure!(!previous.revoked, "application grant already revoked");
                 (previous.not_before_height, previous.expires_at_height, true)
+            }
+            ApplicationGrantActionV1::ReplaceDevice { .. } => {
+                anyhow::bail!("device replacement requires atomic application batch execution")
             }
         };
         Ok(GrantRecordV1 {

@@ -63,6 +63,12 @@ pub enum ApplicationGrantActionV1 {
         expires_at_height: u64,
     },
     Revoke,
+    ReplaceDevice {
+        new_device: [u8; 32],
+        new_device_expected_revision: u64,
+        not_before_height: u64,
+        expires_at_height: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +82,54 @@ pub struct ApplicationGrantIntentV1 {
     pub action: ApplicationGrantActionV1,
 }
 impl ApplicationGrantIntentV1 {
+    /// Derives state transitions from a verified replacement command.
+    /// These derived intents carry no independent signature.
+    pub fn replacement_effects(&self) -> Option<[Self; 2]> {
+        let ApplicationGrantActionV1::ReplaceDevice {
+            new_device,
+            new_device_expected_revision,
+            not_before_height,
+            expires_at_height,
+        } = self.action
+        else {
+            return None;
+        };
+        let mut revoke = self.clone();
+        revoke.action = ApplicationGrantActionV1::Revoke;
+        let mut authorize = self.clone();
+        authorize.selector.device = new_device;
+        authorize.expected_revision = new_device_expected_revision;
+        authorize.action = ApplicationGrantActionV1::Authorize {
+            not_before_height,
+            expires_at_height,
+        };
+        Some([revoke, authorize])
+    }
+
+    /// Creates one signed command covering both device revisions and the
+    /// replacement's validity window. Existing action discriminants are stable.
+    pub fn into_device_replacement(
+        mut self,
+        new_device: [u8; 32],
+        new_device_expected_revision: u64,
+    ) -> Result<Self> {
+        let ApplicationGrantActionV1::Authorize {
+            not_before_height,
+            expires_at_height,
+        } = self.action
+        else {
+            return Err(ApplicationEncodingError);
+        };
+        self.action = ApplicationGrantActionV1::ReplaceDevice {
+            new_device,
+            new_device_expected_revision,
+            not_before_height,
+            expires_at_height,
+        };
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn validate(&self) -> Result<()> {
         self.selector.validate()?;
         if self.issuer_key_ref == [0; 32]
@@ -97,6 +151,25 @@ impl ApplicationGrantIntentV1 {
                 return Err(ApplicationEncodingError);
             }
         }
+        if let ApplicationGrantActionV1::ReplaceDevice {
+            new_device,
+            new_device_expected_revision,
+            not_before_height,
+            expires_at_height,
+        } = self.action
+        {
+            if self.expected_revision == 0
+                || self.selector.device == self.issuer_key_ref
+                || new_device == [0; 32]
+                || new_device == self.selector.device
+                || new_device == self.issuer_key_ref
+                || new_device_expected_revision >= u64::MAX - 1
+                || not_before_height < self.valid_from_height
+                || expires_at_height <= not_before_height
+            {
+                return Err(ApplicationEncodingError);
+            }
+        }
         Ok(())
     }
     fn encoded(&self) -> Result<Vec<u8>> {
@@ -111,6 +184,13 @@ impl ApplicationGrantIntentV1 {
         let mut bytes = MAGIC.to_vec();
         bytes.extend_from_slice(&self.encoded()?);
         Ok(bytes)
+    }
+
+    pub fn command_id(&self) -> Result<[u8; 32]> {
+        let mut digest = Sha256::new();
+        digest.update(b"novovm/uca/application-command/v1\0");
+        digest.update(self.signing_bytes()?);
+        Ok(digest.finalize().into())
     }
 }
 

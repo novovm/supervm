@@ -171,7 +171,10 @@ fn completed_receipt(locator: Locator, block: Option<ArchiveBlock>) -> Result<Va
         if block.stored().is_application_grant() {
             let receipt = block.stored().application_receipt(index)?;
             if receipt.command_id == locator.hash {
-                let mut result = application::receipt_json(&receipt, block.point());
+                let mut result = application::receipt_json(
+                    locator.hash,
+                    &application::finalized_status(receipt, block.point()),
+                );
                 result["lookup_complete"] = json!(true);
                 result["query_scope"] = json!("block");
                 return Ok(result);

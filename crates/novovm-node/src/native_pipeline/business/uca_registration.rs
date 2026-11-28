@@ -22,6 +22,7 @@ use novovm_protocol::uca_registration::{SignedUcaRegistrationV1, UcaRegistration
 use sha2::{Digest, Sha256};
 
 pub const REGISTRATION_SEMANTIC_VERSION: u32 = 5;
+pub const DEVICE_REPLACEMENT_SEMANTIC_VERSION: u32 = 6;
 
 pub fn program_id() -> NodeHash {
     Sha256::digest(b"novovm/uca/native-identity-and-application/v5").into()
@@ -43,10 +44,46 @@ pub fn effect_contract(policy: &super::direct_nov_fee::DirectNovFeePolicy) -> Re
     Ok(hash.finalize().into())
 }
 
-pub(crate) fn is_profile(context: &BatchContext) -> bool {
-    context.business_program == program_id()
-        && context.semantic_version == REGISTRATION_SEMANTIC_VERSION
+pub fn replacement_program_id() -> NodeHash {
+    Sha256::digest(b"novovm/uca/native-identity-and-device-replacement/v6").into()
+}
+
+pub fn replacement_effect_contract(
+    policy: &super::direct_nov_fee::DirectNovFeePolicy,
+) -> Result<NodeHash> {
+    let mut hash = Sha256::new();
+    hash.update(b"novovm/uca/native-identity-and-device-replacement/effects/v6\0");
+    hash.update(effect_contract(policy)?);
+    hash.update(replacement_program_id());
+    hash.update(receipt_codec());
+    hash.update(b"NUAP1-ReplaceDevice;primary-revoke-and-successor-authorize;two-revision-cas;same-parent;distinct-touched-selectors;atomic-all-or-reject;active-successor-at-execution;primary-receipt\0");
+    Ok(hash.finalize().into())
+}
+
+pub(crate) fn supports_device_replacement(context: &BatchContext) -> bool {
+    context.business_program == replacement_program_id()
+        && context.semantic_version == DEVICE_REPLACEMENT_SEMANTIC_VERSION
         && context.receipt_codec == receipt_codec()
+}
+
+pub(crate) fn is_profile(context: &BatchContext) -> bool {
+    (context.business_program == program_id()
+        && context.semantic_version == REGISTRATION_SEMANTIC_VERSION
+        && context.receipt_codec == receipt_codec())
+        || supports_device_replacement(context)
+}
+
+pub(crate) fn matches_profile(
+    context: &BatchContext,
+    policy: &super::direct_nov_fee::DirectNovFeePolicy,
+) -> Result<bool> {
+    Ok(is_profile(context)
+        && context.effect_contract
+            == if supports_device_replacement(context) {
+                replacement_effect_contract(policy)?
+            } else {
+                effect_contract(policy)?
+            })
 }
 
 pub(crate) fn receipt(proof_id: NodeHash) -> Vec<u8> {
@@ -70,7 +107,7 @@ impl RegistrationPlan {
         owner: &AoemExecFacade,
     ) -> Result<Self> {
         ensure!(
-            is_profile(&context) && context.effect_contract == effect_contract(policy)?,
+            matches_profile(&context, policy)?,
             "registration business contract mismatch"
         );
         ensure!(

@@ -9,6 +9,7 @@ use crate::native_pipeline::{
     business::{
         direct_nov_fee::DirectNovFeePolicy,
         uca_application::{ApplicationGrantAccessV1, ApplicationGrantObservationV1},
+        uca_registration,
         uca_spend_state::identity_record_changes,
     },
     execution::plan::{
@@ -358,7 +359,14 @@ struct TestDirectory(PathBuf);
 impl TestDirectory {
     fn new() -> Result<Self> {
         let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-        let path = std::env::temp_dir().canonicalize()?.join(format!(
+        // The Windows provider appends forward-slash paths, which are invalid
+        // under the verbatim prefix returned by canonicalize.
+        let root = std::env::temp_dir();
+        anyhow::ensure!(
+            root.is_absolute(),
+            "test temporary directory must be absolute"
+        );
+        let path = root.join(format!(
             "novovm-application-batch-{}-{stamp}",
             std::process::id()
         ));
@@ -605,12 +613,31 @@ fn real_application_batch_capture_execute_revoke_atomic_failure_and_cold_recover
     };
     let mut revoke = signed[0].intent.clone();
     revoke.expected_revision = 1;
-    revoke.action = ApplicationGrantActionV1::Revoke;
-    let revoke = vec![fixture.sign(revoke)?];
+    let stale = vec![fixture.sign(revoke.clone().into_device_replacement([99; 32], 1)?)?];
+    assert!(fixture.plan(&stale, next).is_err());
+    let next = BatchContext {
+        business_program: uca_registration::replacement_program_id(),
+        semantic_version: uca_registration::DEVICE_REPLACEMENT_SEMANTIC_VERSION,
+        effect_contract: uca_registration::replacement_effect_contract(&policy())?,
+        receipt_codec: uca_registration::receipt_codec(),
+        ..next
+    };
+    let before_failed_replacement = memory.0.clone();
+    assert!(incremental_capture(fixture.plan(&stale, next)?, &memory)?
+        .execute(&mut session, TIMEOUT)
+        .is_err());
+    assert_eq!(memory.0, before_failed_replacement);
+    observe(&memory, active_root, 1, &access)?.check_at_root(active_root, 1, 1)?;
+    let command = revoke.into_device_replacement([99; 32], 0)?;
+    let [_, replacement] = command
+        .replacement_effects()
+        .context("replacement effects")?;
+    let replacement_access = ApplicationGrantAccessV1::new(replacement.selector.clone())?;
+    let revoke = vec![fixture.sign(command)?];
     let before_revoke = memory.0.clone();
     let revoked = incremental_capture(fixture.plan(&revoke, next)?, &memory)?
         .execute(&mut session, TIMEOUT)?;
-    assert_execution(&fixture, &memory, next, &revoke, &revoked)?;
+    assert_eq!(revoked.receipts().len(), 1);
     assert_eq!(memory.0, before_revoke);
     let revoked_root = revoked.effects().update().root();
     memory.0.extend(revoked.effects().update().nodes().clone());
@@ -625,6 +652,7 @@ fn real_application_batch_capture_execute_revoke_atomic_failure_and_cold_recover
     assert_eq!(view.identity_status, IdentityStatusV1::Active);
     assert_eq!(view.issuer_key_ref, signed[0].intent.issuer_key_ref);
     assert!(tombstone.check_at_root(revoked_root, 2, 2).is_err());
+    observe(&memory, revoked_root, 2, &replacement_access)?.check_at_root(revoked_root, 2, 1)?;
     observe(&memory, revoked_root, 2, &other_access)?.check_at_root(revoked_root, 2, 1)?;
     let replay_context = BatchContext {
         parent_block_hash: [8; 32],
@@ -634,7 +662,7 @@ fn real_application_batch_capture_execute_revoke_atomic_failure_and_cold_recover
         height: 3,
         slot: 3,
         timestamp_unix_ms: 3,
-        ..context
+        ..next
     };
     let before_failures = memory.0.clone();
     for replay in [&signed[..1], revoke.as_slice()] {

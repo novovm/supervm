@@ -16,6 +16,7 @@ use std::{net::UdpSocket, sync::Mutex};
 struct FixtureReader {
     selector: ApplicationGrantSelectorV1,
     view: Arc<Mutex<ApplicationGrantViewV1>>,
+    replacement: Option<(ApplicationGrantSelectorV1, ApplicationGrantViewV1)>,
 }
 impl PublishedGrants for FixtureReader {
     fn domain(&self) -> (u64, [u8; 32]) {
@@ -28,6 +29,17 @@ impl PublishedGrants for FixtureReader {
         Box<dyn std::future::Future<Output = Result<ApplicationGrantViewV1>> + Send + 'a>,
     > {
         Box::pin(async move {
+            if let Some((replacement_selector, replacement_view)) = &self.replacement {
+                if selector == replacement_selector {
+                    let observed = *self.view.lock().unwrap();
+                    ensure!(observed.revoked, "replacement not published");
+                    return Ok(ApplicationGrantViewV1 {
+                        state_root: observed.state_root,
+                        height: observed.height,
+                        ..*replacement_view
+                    });
+                }
+            }
             ensure!(selector == &self.selector, "fixture scope mismatch");
             Ok(*self.view.lock().unwrap())
         })
@@ -140,7 +152,12 @@ async fn begin(
         signature,
     })
 }
-async fn exercise(a: TransportIdentity, b: TransportIdentity) -> Result<()> {
+async fn exercise(
+    a: TransportIdentity,
+    b: TransportIdentity,
+    replacement_device: TransportIdentity,
+) -> Result<()> {
+    let (_new_client, new_peer, _new_server) = peer(&a, &replacement_device).await?;
     let (_client, peer, _server) = peer(&a, &b).await?;
     let selector = ApplicationGrantSelectorV1 {
         chain_id: 1,
@@ -161,10 +178,16 @@ async fn exercise(a: TransportIdentity, b: TransportIdentity) -> Result<()> {
         not_before_height: 1,
         expires_at_height: 100,
     }));
+    let replacement_selector = ApplicationGrantSelectorV1 {
+        device: key_ref(replacement_device.public_key())?,
+        ..selector.clone()
+    };
+    let replacement_view = *view.lock().unwrap();
     let mut gate = LoginGate {
         authority: Box::new(FixtureReader {
             selector,
             view: view.clone(),
+            replacement: Some((replacement_selector, replacement_view)),
         }),
         identity: a,
         pending: BTreeMap::new(),
@@ -182,9 +205,28 @@ async fn exercise(a: TransportIdentity, b: TransportIdentity) -> Result<()> {
     let replacement = begin(&mut gate, &peer, &b).await?;
     gate.request(&peer, "login_complete", &serde_json::to_value(replacement)?)
         .await?;
-    view.lock().unwrap().revoked = true;
+    assert!(begin(&mut gate, &new_peer, &replacement_device)
+        .await
+        .is_err());
+    {
+        let mut state = view.lock().unwrap();
+        state.state_root = [4; 32];
+        state.height += 1;
+        state.revision += 1;
+        state.revoked = true;
+    }
     assert!(gate.request(&peer, "events", &Value::Null).await.is_err());
     assert!(gate.sessions.is_empty());
+    assert!(begin(&mut gate, &peer, &b).await.is_err());
+    let proof_on_new_device = begin(&mut gate, &new_peer, &replacement_device).await?;
+    assert!(gate
+        .request(
+            &new_peer,
+            "login_complete",
+            &serde_json::to_value(proof_on_new_device)?
+        )
+        .await?
+        .is_some());
     {
         let mut state = view.lock().unwrap();
         state.revoked = false;
@@ -235,6 +277,7 @@ async fn native_session_login_consumes_challenges_and_rechecks_revocation() -> R
     exercise(
         crate::transport_identity::component_fixture::component_identity([71; 32]),
         crate::transport_identity::component_fixture::component_identity([72; 32]),
+        crate::transport_identity::component_fixture::component_identity([73; 32]),
     )
     .await
 }
@@ -248,7 +291,7 @@ async fn actual_mldsa_device_login_and_revocation_gate() -> Result<()> {
     let facade = AoemExecFacade::open(Path::new(&path), Default::default())?;
     let runtime = facade.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
     let mut identities = Vec::new();
-    for _ in 0..2 {
+    for _ in 0..3 {
         let key = runtime.generate_keypair()?;
         let material = crate::purpose_keys::PurposeKeyMaterialV3::new(
             key.public_key,
@@ -259,5 +302,10 @@ async fn actual_mldsa_device_login_and_revocation_gate() -> Result<()> {
             material,
         )?);
     }
-    exercise(identities.remove(0), identities.remove(0)).await
+    exercise(
+        identities.remove(0),
+        identities.remove(0),
+        identities.remove(0),
+    )
+    .await
 }

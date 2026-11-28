@@ -145,7 +145,7 @@ pub fn review_activation(
         parent_receipt_root: point.receipt_batch_commitment,
         parent_state_version: point.state_version,
         previous,
-        next: registration_rules(&genesis.policy)?,
+        next: replacement_rules(&genesis.policy)?,
     };
     activation.signing_bytes()?;
     Ok(ReviewedBusinessActivation {
@@ -160,6 +160,15 @@ fn registration_rules(policy: &DirectNovFeePolicy) -> Result<BusinessRules> {
         program: uca_registration::program_id(),
         semantic_version: uca_registration::REGISTRATION_SEMANTIC_VERSION,
         effects: uca_registration::effect_contract(policy)?,
+        receipts: uca_registration::receipt_codec(),
+    })
+}
+
+fn replacement_rules(policy: &DirectNovFeePolicy) -> Result<BusinessRules> {
+    Ok(BusinessRules {
+        program: uca_registration::replacement_program_id(),
+        semantic_version: uca_registration::DEVICE_REPLACEMENT_SEMANTIC_VERSION,
+        effects: uca_registration::replacement_effect_contract(policy)?,
         receipts: uca_registration::receipt_codec(),
     })
 }
@@ -180,6 +189,12 @@ fn rules(context: &BatchContext) -> BusinessRules {
 impl BusinessSchedule {
     pub(crate) fn is_active_at(&self, height: u64) -> bool {
         height >= self.verified.subject().context.height
+    }
+
+    pub(crate) fn supports_device_replacement_at(&self, height: u64) -> bool {
+        self.is_active_at(height)
+            && self.verified.subject().next.semantic_version
+                == uca_registration::DEVICE_REPLACEMENT_SEMANTIC_VERSION
     }
 
     pub(crate) fn apply(&self, template: &mut BatchContext, height: u64) {
@@ -205,7 +220,8 @@ impl BusinessSchedule {
                     == genesis.genesis_config_commitment
                 && activation.context.protocol_commitment == genesis.protocol_commitment
                 && activation.previous == rules(genesis)
-                && activation.next == registration_rules(policy)?,
+                && (activation.next == registration_rules(policy)?
+                    || activation.next == replacement_rules(policy)?),
             "business activation does not match installed genesis and supported rules"
         );
         Ok(Self {
@@ -371,6 +387,24 @@ mod tests {
             }
         ));
         assert!(!matches_configured(None, &upgraded, boundary, parent));
+        let next = replacement_rules(&policy)?;
+        let replacement = BatchContext {
+            business_program: next.program,
+            semantic_version: next.semantic_version,
+            effect_contract: next.effects,
+            receipt_codec: next.receipts,
+            ..upgraded
+        };
+        assert!(!schedule.supports_device_replacement_at(boundary.height));
+        assert!(!schedule.matches(&replacement, boundary, parent));
+        config.activation.next = next;
+        assert!(BusinessSchedule::verify(&config, &original, &policy, &set).is_err());
+        config.approvals[0].signature = key.sign(&config.activation.signing_bytes()?).to_bytes();
+        let replacement_schedule = BusinessSchedule::verify(&config, &original, &policy, &set)?;
+        assert!(!replacement_schedule.supports_device_replacement_at(parent.height));
+        assert!(replacement_schedule.supports_device_replacement_at(boundary.height));
+        assert!(replacement_schedule.matches(&replacement, boundary, parent));
+        assert!(!replacement_schedule.matches(&upgraded, boundary, parent));
         Ok(())
     }
 }

@@ -22,6 +22,7 @@ const MAGIC_PROPOSAL_V9: &[u8; 8] = b"NVQUERY9";
 const MAGIC_ARCHIVE_V10: &[u8; 8] = b"NVQARC10";
 const MAGIC_STATE_V11: &[u8; 8] = b"NVQSTA11";
 const MAGIC_REGISTRATION_V12: &[u8; 8] = b"NVQREG12";
+const MAGIC_APPLICATION_COMMAND_V13: &[u8; 8] = b"NVQCMD13";
 const MAX_PROPOSAL_REPLY_BYTES: usize = 4096;
 // Room for the canonical ML-DSA-65 round-BFT proposal, including its prefix.
 const MAX_SIGNED_PROPOSAL_BYTES: usize = 3840;
@@ -216,6 +217,9 @@ pub enum Query {
     UcaRegistration {
         request_hash: Hash,
     },
+    UcaApplicationCommand {
+        command_id: Hash,
+    },
 }
 
 impl Query {
@@ -273,6 +277,19 @@ pub enum RegistrationStatusV1 {
     OutsideValidityWindow,
     IdentityAlreadyRegistered,
     Finalized { height: u64, block_hash: Hash },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApplicationCommandStatusV1 {
+    NotRecent,
+    Received,
+    Rejected,
+    Finalized {
+        receipt: crate::uca_application::ApplicationGrantReceiptV1,
+        height: u64,
+        block_hash: Hash,
+        state_root: Hash,
+    },
 }
 
 /// Metadata at one published root. Possession, head trust and project/tool
@@ -595,6 +612,7 @@ pub enum Answer {
     FinalizedHeader(ArchiveChunk),
     StateNode(StateNodePayload),
     UcaRegistration(RegistrationStatusV1),
+    UcaApplicationCommand(ApplicationCommandStatusV1),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Response {
@@ -644,6 +662,9 @@ fn is_application(frame: &Frame) -> bool {
 fn is_registration(frame: &Frame) -> bool {
     matches!(request(frame).query, Query::UcaRegistration { .. })
 }
+fn is_application_command(frame: &Frame) -> bool {
+    matches!(request(frame).query, Query::UcaApplicationCommand { .. })
+}
 fn is_proposal(query: &Query) -> bool {
     query.proposal_selector().is_some()
 }
@@ -690,6 +711,9 @@ fn valid_request(request: &Request) -> bool {
     if let Query::UcaRegistration { request_hash } = &request.query {
         return *request_hash != [0; 32];
     }
+    if let Query::UcaApplicationCommand { command_id } = &request.query {
+        return *command_id != [0; 32];
+    }
     true
 }
 fn valid(frame: &Frame) -> bool {
@@ -715,6 +739,23 @@ fn answer_matches(request: &Request, answer: &Answer) -> bool {
             }
             _ => true,
         },
+        (Query::UcaApplicationCommand { command_id }, Answer::UcaApplicationCommand(status)) => {
+            match status {
+                ApplicationCommandStatusV1::Finalized {
+                    receipt,
+                    height,
+                    block_hash,
+                    state_root,
+                } => {
+                    receipt.command_id == *command_id
+                        && receipt.validate().is_ok()
+                        && *height > 0
+                        && *block_hash != [0; 32]
+                        && *state_root != [0; 32]
+                }
+                _ => true,
+            }
+        }
         (Query::UcaApplicationGrant { .. }, Answer::UcaApplicationGrant(state)) => match state {
             ApplicationGrantStateV1::Pending => true,
             ApplicationGrantStateV1::IdentityMissing { state_root, .. }
@@ -784,6 +825,8 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
     };
     let mut bytes = if response {
         MAGIC_RESPONSE_V6
+    } else if is_application_command(&frame) {
+        MAGIC_APPLICATION_COMMAND_V13
     } else if is_registration(&frame) {
         MAGIC_REGISTRATION_V12
     } else if state {
@@ -828,11 +871,20 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
     let archive = bytes.starts_with(MAGIC_ARCHIVE_V10);
     let state = bytes.starts_with(MAGIC_STATE_V11);
     let registration = bytes.starts_with(MAGIC_REGISTRATION_V12);
+    let application_command = bytes.starts_with(MAGIC_APPLICATION_COMMAND_V13);
     let batch = if bytes.starts_with(MAGIC_V1) {
         false
     } else if bytes.starts_with(MAGIC_V2) {
         true
-    } else if uca || identity || application || proposal || archive || state || registration {
+    } else if uca
+        || identity
+        || application
+        || proposal
+        || archive
+        || state
+        || registration
+        || application_command
+    {
         false
     } else {
         return Err("native query header/size");
@@ -857,6 +909,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
         || is_identity(&frame) != identity
         || is_application(&frame) != application
         || is_registration(&frame) != registration
+        || is_application_command(&frame) != application_command
         || is_proposal(&request(&frame).query) != proposal
         || is_archive(&request(&frame).query) != archive
         || matches!(request(&frame).query, Query::StateNode(_)) != state

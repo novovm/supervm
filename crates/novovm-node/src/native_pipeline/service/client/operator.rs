@@ -308,6 +308,7 @@ fn answer_view(answer: Answer) -> Value {
         Answer::ConsensusProposalProgress { status, progress } => proposal_view(status, progress),
         Answer::UcaIdentity(state) => json!({"UcaIdentity":state}),
         Answer::UcaRegistration(status) => json!({"UcaRegistration":status}),
+        Answer::UcaApplicationCommand(status) => json!({"UcaApplicationCommand":status}),
         Answer::UcaApplicationGrant(state) => json!({"UcaApplicationGrant":state}),
         Answer::Error(error) => json!({"Error":error}),
         Answer::ReceiptProof(chunk) => json!({"ReceiptProofChunk": {
@@ -391,8 +392,13 @@ fn operation(action: &str, input: Option<&Path>) -> Result<Operation> {
             novovm_protocol::uca_application::SignedApplicationGrantV1::decode(&raw)?;
             Ok(Operation::Submit(SignedInput::Application(raw)))
         }
+        ("application-status", Some(path)) => {
+            let raw = read_bounded(path, codec.transaction_bytes)?;
+            let signed = novovm_protocol::uca_application::SignedApplicationGrantV1::decode(&raw)?;
+            Ok(Operation::Query(Query::UcaApplicationCommand { command_id: signed.intent.command_id()? }))
+        }
         _ => anyhow::bail!(
-            "expected status, query <request.nvquery>, submit <signed-batch.nuapfl>, submit-registration <signed.nuir>, registration-status <signed.nuir>, or submit-application <signed.nuap>"
+            "expected status, query <request.nvquery>, submit <signed-batch.nuapfl>, submit-registration <signed.nuir>, registration-status <signed.nuir>, submit-application <signed.nuap>, or application-status <signed.nuap>"
         ),
     }
 }

@@ -81,6 +81,7 @@ fn application_revision_cannot_become_asset_nonce_credit() {
             admitted: None,
             canonical_len: 7,
             position: PendingPosition::Application(ApplicationPosition {
+                replacement_grant_id: None,
                 grant_id,
                 expected_revision: 9,
             }),
@@ -126,6 +127,7 @@ fn future_asset_nonce_cannot_block_bounded_application_revoke_window() {
                 admitted: None,
                 canonical_len: 7,
                 position: PendingPosition::Application(ApplicationPosition {
+                    replacement_grant_id: None,
                     grant_id: hash,
                     expected_revision: revision,
                 }),

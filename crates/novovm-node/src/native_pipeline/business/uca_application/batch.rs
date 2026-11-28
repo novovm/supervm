@@ -79,19 +79,25 @@ impl ApplicationGrantBodyV1 {
                 "application body byte budget exceeded"
             );
             let command = fact.reattach(signed)?;
-            ensure!(
-                grants.insert(command.intent().selector.grant_id()?),
-                "application batch contains repeated grant selector"
-            );
             let access = ApplicationGrantAccessV1::new(command.intent().selector.clone())?;
-            for declaration in access.declarations() {
-                declarations
-                    .entry(declaration.key.clone())
-                    .and_modify(|existing| {
-                        existing.may_put |= declaration.may_put;
-                        existing.may_delete |= declaration.may_delete;
-                    })
-                    .or_insert_with(|| declaration.clone());
+            let replacement = command.intent().replacement_effects();
+            let replacement_access = replacement
+                .map(|[_, next]| ApplicationGrantAccessV1::new(next.selector))
+                .transpose()?;
+            for target in std::iter::once(&access).chain(replacement_access.iter()) {
+                ensure!(
+                    grants.insert(target.selector.grant_id()?),
+                    "application batch contains repeated grant selector"
+                );
+                for declaration in target.declarations() {
+                    declarations
+                        .entry(declaration.key.clone())
+                        .and_modify(|existing| {
+                            existing.may_put |= declaration.may_put;
+                            existing.may_delete |= declaration.may_delete;
+                        })
+                        .or_insert_with(|| declaration.clone());
+                }
             }
             ensure!(
                 declarations.len() <= budget.access_keys
@@ -116,7 +122,7 @@ impl ApplicationGrantBodyV1 {
     pub fn bind(self, context: BatchContext) -> Result<ApplicationGrantPlanV1> {
         ensure!(
             if uca_registration::is_profile(&context) {
-                context.effect_contract == uca_registration::effect_contract(&self.policy)?
+                uca_registration::matches_profile(&context, &self.policy)?
             } else {
                 context.business_program == application_program_id_v1()
                     && context.semantic_version == APPLICATION_SEMANTIC_VERSION_V1
@@ -124,6 +130,14 @@ impl ApplicationGrantBodyV1 {
                     && context.effect_contract == application_effect_contract_v1(&self.policy)?
             },
             "application native business contract mismatch"
+        );
+        ensure!(
+            uca_registration::supports_device_replacement(&context)
+                || self.checked.iter().all(|checked| {
+                    !matches!(checked.intent().action,
+                        novovm_protocol::uca_application::ApplicationGrantActionV1::ReplaceDevice { .. })
+                }),
+            "application device replacement is outside its activated business contract"
         );
         ensure!(
             self.checked.iter().all(|checked| {
@@ -282,12 +296,47 @@ impl ApplicationGrantInputV1 {
                 context.parent_height,
                 uca_registration::is_profile(&context),
             )?;
+            let replacement = checked.intent().replacement_effects();
+            let primary = replacement
+                .as_ref()
+                .map_or(checked.intent(), |[old, _]| old);
             let record = access.transition_record(
                 &state,
-                checked,
+                primary,
                 context.parent_state_root,
                 context.height,
             )?;
+            if let Some([_, new]) = replacement {
+                let novovm_protocol::uca_application::ApplicationGrantActionV1::Authorize {
+                    not_before_height,
+                    ..
+                } = new.action
+                else {
+                    unreachable!("replacement successor is an authorization")
+                };
+                ensure!(
+                    not_before_height <= context.height,
+                    "replacement device must be active at execution height"
+                );
+                let next_access = ApplicationGrantAccessV1::new(new.selector.clone())?;
+                let next_state = next_access.read_under_rules(
+                    self.input.state_input(),
+                    context.parent_state_root,
+                    context.parent_height,
+                    uca_registration::is_profile(&context),
+                )?;
+                let next = next_access.transition_record(
+                    &next_state,
+                    &new,
+                    context.parent_state_root,
+                    context.height,
+                )?;
+                changes.extend(record_pages::record_changes(
+                    &next_access.prefix,
+                    &postcard::to_allocvec(&next)?,
+                    GRANT_BYTES,
+                )?);
+            }
             let receipt = ApplicationGrantReceiptV1 {
                 command_id: application_command_id(checked.intent())?,
                 grant_id: record.grant_id,
@@ -329,10 +378,7 @@ impl ApplicationGrantInputV1 {
 pub(crate) fn application_command_id(
     intent: &novovm_protocol::uca_application::ApplicationGrantIntentV1,
 ) -> Result<NodeHash> {
-    let mut digest = Sha256::new();
-    digest.update(b"novovm/uca/application-command/v1\0");
-    digest.update(intent.signing_bytes()?);
-    Ok(digest.finalize().into())
+    Ok(intent.command_id()?)
 }
 
 /// Created only by the complete pinned compiler, never from caller StateChange.

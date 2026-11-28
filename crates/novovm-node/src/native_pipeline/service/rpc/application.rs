@@ -15,7 +15,14 @@ const ACCESS_KEYS_PER_ROW: usize = 35;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ApplicationPosition {
     pub(super) grant_id: Hash,
+    pub(super) replacement_grant_id: Option<Hash>,
     pub(super) expected_revision: u64,
+}
+
+impl ApplicationPosition {
+    fn grant_ids(self) -> impl Iterator<Item = Hash> {
+        std::iter::once(self.grant_id).chain(self.replacement_grant_id)
+    }
 }
 
 pub(crate) fn is_application_context(
@@ -43,21 +50,43 @@ pub(super) fn position(admitted: &AdmittedTransfer) -> Result<ApplicationPositio
         .intent();
     Ok(ApplicationPosition {
         grant_id: intent.selector.grant_id()?,
+        replacement_grant_id: intent
+            .replacement_effects()
+            .map(|[_, next]| next.selector.grant_id())
+            .transpose()?,
         expected_revision: intent.expected_revision,
     })
 }
 
-pub(super) fn receipt_json(
-    receipt: &novovm_protocol::uca_application::ApplicationGrantReceiptV1,
-    point: ParentPoint,
-) -> Value {
-    json!({"tx_hash":hex(&receipt.command_id), "state":"finalized_application",
+pub(super) fn receipt_json(hash: Hash, status: &ApplicationCommandStatusV1) -> Value {
+    let ApplicationCommandStatusV1::Finalized {
+        receipt,
+        height,
+        block_hash,
+        state_root,
+    } = status
+    else {
+        return json!({"tx_hash":hex(&hash), "state":"rejected_application", "finalized":false, "proof_verified":false});
+    };
+    json!({"tx_hash":hex(&hash), "state":"finalized_application",
         "finalized":true, "executed":true, "proof_verified":false,
         "finality_kind":"BFT_durable", "grant_id":hex(&receipt.grant_id),
         "previous_revision":receipt.previous_revision, "revision":receipt.revision,
-        "revoked":receipt.revoked, "block_height":point.height,
+        "revoked":receipt.revoked, "block_height":height,
         "not_before_height":receipt.not_before_height, "expires_at_height":receipt.expires_at_height,
-        "state_root":hex(&point.state_root), "block_hash":hex(&point.block_hash)})
+        "state_root":hex(state_root), "block_hash":hex(block_hash)})
+}
+
+pub(super) fn finalized_status(
+    receipt: novovm_protocol::uca_application::ApplicationGrantReceiptV1,
+    point: ParentPoint,
+) -> ApplicationCommandStatusV1 {
+    ApplicationCommandStatusV1::Finalized {
+        receipt,
+        height: point.height,
+        block_hash: point.block_hash,
+        state_root: point.state_root,
+    }
 }
 
 /// One bounded read-only capture, always anchored by the controller, not input.
@@ -81,11 +110,26 @@ impl ApplicationRead {
         );
         let checked = reattach(input, admitted)?;
         let access = ApplicationGrantAccessV1::new(checked.intent().selector.clone())?;
-        let declarations: Vec<_> = access
-            .declarations()
-            .iter()
-            .map(|d| DeclaredAccess {
-                key: d.key.clone(),
+        let replacement = checked
+            .intent()
+            .replacement_effects()
+            .map(|[_, next]| ApplicationGrantAccessV1::new(next.selector))
+            .transpose()?;
+        ensure!(
+            replacement.is_none()
+                || pipeline.business_schedule.as_ref().is_some_and(|schedule| {
+                    schedule.supports_device_replacement_at(parent.height.saturating_add(1))
+                }),
+            "application device replacement is outside its activated business contract"
+        );
+        let declarations: Vec<_> = std::iter::once(&access)
+            .chain(replacement.iter())
+            .flat_map(|access| access.declarations())
+            .map(|d| d.key.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|key| DeclaredAccess {
+                key,
                 may_put: false,
                 may_delete: false,
             })
@@ -137,23 +181,13 @@ impl ApplicationRead {
                     .business_schedule
                     .as_ref()
                     .is_some_and(|schedule| schedule.is_active_at(self.parent.height));
-                let state = self.access.read_under_rules(
+                let checked = reattach(input, admitted)?;
+                self.access.preflight(
                     &input_state,
+                    &checked,
                     self.parent.state_root,
                     self.parent.height,
                     native_registration,
-                )?;
-                let checked = reattach(input, admitted)?;
-                // Reuse the exact transition checker; discard proposed changes.
-                // This read-only frontier cannot stage or publish those changes.
-                self.access.transition(
-                    &state,
-                    &checked,
-                    self.parent.state_root,
-                    self.parent
-                        .height
-                        .checked_add(1)
-                        .context("application height exhausted")?,
                 )?;
                 Ok(Some(()))
             }
@@ -222,26 +256,45 @@ fn selection_window(
         let Some(entry) = pending.get(hash) else {
             continue;
         };
-        if !matches!(entry.position, PendingPosition::Application(_)) {
+        let PendingPosition::Application(position) = entry.position else {
             continue;
-        }
+        };
         let Some(row_bytes) = entry.selection_input_bytes() else {
             continue;
         };
+        let row_keys = ACCESS_KEYS_PER_ROW
+            + usize::from(position.replacement_grant_id.is_some()) * ACCESS_KEYS_PER_ROW;
         if hashes.len() == batch_size.min(MAX_ROWS)
             || row_bytes > super::super::uca_body_byte_limit(batch_size).saturating_sub(bytes)
-            || ACCESS_KEYS_PER_ROW > key_limit.saturating_sub(access_keys)
+            || row_keys > key_limit.saturating_sub(access_keys)
         {
             break;
         }
         bytes += row_bytes;
-        access_keys += ACCESS_KEYS_PER_ROW;
+        access_keys += row_keys;
         hashes.push_back(*hash);
     }
     hashes
 }
 
 impl RpcLifecycle {
+    pub(super) fn record_application_status(
+        &mut self,
+        hash: Hash,
+        status: ApplicationCommandStatusV1,
+    ) {
+        if matches!(
+            self.application_receipts.get(&hash),
+            Some(ApplicationCommandStatusV1::Finalized { .. })
+        ) {
+            return;
+        }
+        if self.application_receipts.insert(hash, status).is_none() {
+            self.recent.push_back(hash);
+        }
+        self.trim_recent_receipts();
+    }
+
     pub(super) fn trim_recent_receipts(&mut self) {
         while self.recent.len() > RECENT_RECEIPTS {
             let hash = self.recent.pop_front().expect("recent receipt");
@@ -344,10 +397,19 @@ impl RpcLifecycle {
             }
         }
         let row = work.rows.pop_front().expect("application row");
+        let command_id = row
+            .as_ref()
+            .ok()
+            .and_then(|(_, admitted)| admitted.checked_application()?.intent().command_id().ok());
         let result = result.and_then(|()| {
             let (input, admitted) = row?;
             self.admit_application_checked(input, admitted, broadcast)
         });
+        if let Some(hash) =
+            command_id.filter(|hash| result.is_err() && !self.pending.contains_key(hash))
+        {
+            self.record_application_status(hash, ApplicationCommandStatusV1::Rejected);
+        }
         work.results.push_back(result);
         self.admission.made_progress = true;
         Ok(work.rows.is_empty())
@@ -378,7 +440,7 @@ impl RpcLifecycle {
         }
         ensure!(
             !self.pending.values().any(|entry| matches!(entry.position,
-            PendingPosition::Application(p) if p.grant_id == key.grant_id)),
+            PendingPosition::Application(p) if p.grant_ids().any(|grant| key.grant_ids().any(|touched| touched == grant)))),
             "application grant already pending"
         );
         let canonical_len = input.encoded_len()?;
@@ -523,13 +585,7 @@ impl RpcLifecycle {
                 Ok(Some(())) => selection.selected.push(hash),
                 Err(_) => {
                     self.remove_application_pending(hash);
-                    self.application_receipts.insert(
-                        hash,
-                        json!({"tx_hash":hex(&hash),
-                        "state":"rejected_application", "finalized":false, "proof_verified":false}),
-                    );
-                    self.recent.push_back(hash);
-                    self.trim_recent_receipts();
+                    self.record_application_status(hash, ApplicationCommandStatusV1::Rejected);
                     self.gossip_rejected += 1;
                 }
             }

@@ -85,6 +85,21 @@ pub(super) fn validate_receipts(
                     "application authorization receipt mismatch"
                 );
             }
+            ApplicationGrantActionV1::ReplaceDevice {
+                not_before_height,
+                expires_at_height,
+                ..
+            } => {
+                ensure!(
+                    crate::native_pipeline::business::uca_registration::supports_device_replacement(
+                        context
+                    ) && receipt.revoked
+                        && receipt.previous_revision > 0
+                        && not_before_height <= context.height
+                        && context.height < expires_at_height,
+                    "application replacement receipt mismatch"
+                );
+            }
             ApplicationGrantActionV1::Revoke => {
                 ensure!(
                     receipt.revoked && receipt.previous_revision > 0,
@@ -92,7 +107,21 @@ pub(super) fn validate_receipts(
                 );
             }
         }
-        for access in ApplicationGrantAccessV1::new(intent.selector.clone())?.declarations() {
+        let primary = ApplicationGrantAccessV1::new(intent.selector.clone())?;
+        let replacement = intent
+            .replacement_effects()
+            .map(|[_, next]| {
+                ensure!(
+                    grants.insert(next.selector.grant_id()?),
+                    "application archive repeated replacement selector"
+                );
+                ApplicationGrantAccessV1::new(next.selector)
+            })
+            .transpose()?;
+        for access in std::iter::once(&primary)
+            .chain(replacement.iter())
+            .flat_map(|target| target.declarations())
+        {
             expected
                 .entry(access.key.clone())
                 .and_modify(|value| {

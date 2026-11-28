@@ -249,7 +249,7 @@ impl NovTransferBody {
         let uca = matches!(&self.batch, BodyInput::Uca { .. });
         if uca && super::uca_registration::is_profile(&context) {
             ensure!(
-                context.effect_contract == super::uca_registration::effect_contract(&self.policy)?,
+                super::uca_registration::matches_profile(&context, &self.policy)?,
                 "fee/effect policy commitment mismatch"
             );
             return Ok(NovTransferPlan {
