@@ -12,6 +12,7 @@ use crate::native_pipeline::{
     },
 };
 use anyhow::{ensure, Context, Result};
+use novovm_consensus::round_bft::VerifiedDecision;
 use novovm_protocol::native_query::MAX_ARCHIVE_PROOF_BYTES as MAX_PROOF_BYTES;
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +40,7 @@ struct ReceiptProofHeader {
 pub struct VerifiedReceiptFinality {
     receipt: ReceiptView,
     block: ParentPoint,
+    decision: VerifiedDecision,
 }
 
 impl VerifiedReceiptFinality {
@@ -48,6 +50,10 @@ impl VerifiedReceiptFinality {
 
     pub fn block(&self) -> &ParentPoint {
         &self.block
+    }
+
+    pub(crate) fn decision(&self) -> &VerifiedDecision {
+        &self.decision
     }
 }
 
@@ -201,7 +207,7 @@ impl ReceiptFinalityProof {
             hash: [0; 32],
         }
         .checked(set, parent)?;
-        let block = statement.verified_point(set, &self.proposal, &self.precommits)?;
+        let (block, decision) = statement.verified_point(set, &self.proposal, &self.precommits)?;
 
         let mut matched = None;
         for bytes in &self.receipts {
@@ -218,6 +224,7 @@ impl ReceiptFinalityProof {
             receipt: matched
                 .context("expected transaction missing from the committed receipt list")?,
             block,
+            decision,
         })
     }
 

@@ -244,6 +244,6 @@ pub(crate) fn verify(
         hash: [0; 32],
     }
     .checked(set, parent)?;
-    let point = statement.verified_point(set, proposal, precommits)?;
+    let (point, _) = statement.verified_point(set, proposal, precommits)?;
     Ok(VerifiedHeader { point, statement })
 }

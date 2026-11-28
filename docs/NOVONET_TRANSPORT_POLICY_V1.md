@@ -61,7 +61,8 @@ Privacy-only 的发送、收件和回执只走合格隐私路径。缺少合格�
   `novovm-native-client <发行发现配置> verify-receipt-proof <配置SHA-256> <交易哈希> <高度> <证明文件>`
   离线复验。复验使用固定的发行锚点或已同步的连续区块头，核对交易归属、原父状态、Precommit QC
   和配置中的最低终结检查点。本地缺少必要区块头时先用 `sync-chain` 补齐。复验只读本地文件，
-  无需通信密钥和网络连接。
+  无需通信密钥和网络连接。已验真的回执输出 `precommit_certificate`，包括终结轮次、签票权重、
+  法定门槛，以及该份证书中各签者的验证者 ID 和权重。
 - `novovm-native-client <发行发现配置> verify-uca-execution <配置SHA-256> <归档文件>`
   使用发行锚点或本地已验签的连续区块头，离线核验归档中的 UCA 资产交易、父状态见证和
   Precommit QC。Client 调用现有 AOEM 重算结果，并逐项匹配区块签署的执行承诺。验证只读本地

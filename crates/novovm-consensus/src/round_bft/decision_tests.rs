@@ -14,6 +14,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_weights([1; 4])
+    }
+
+    fn with_weights(weights: [u64; 4]) -> Self {
         let keys: Vec<_> = (41..45)
             .map(|seed| SigningKey::from_bytes(&[seed; 32]))
             .collect();
@@ -22,7 +26,10 @@ impl Fixture {
             1,
             1,
             keys.iter()
-                .map(|key| wire::Validator::new(key.verifying_key().to_bytes(), 1).unwrap())
+                .zip(weights)
+                .map(|(key, weight)| {
+                    wire::Validator::new(key.verifying_key().to_bytes(), weight).unwrap()
+                })
                 .collect(),
         )
         .unwrap();
@@ -111,6 +118,16 @@ fn verified_decision_accepts_real_same_round_precommits_as_read_only_evidence() 
             wire::encode_quorum(&certificate).unwrap()
         );
     }
+}
+
+#[test]
+fn verified_decision_retains_weight_of_the_verified_precommits() {
+    let fixture = Fixture::with_weights([3, 2, 1, 1]);
+    let proposal = fixture.proposal(fixture.context, 2, VALUE);
+    let certificate = fixture.quorum(fixture.context, 2, wire::Phase::Precommit, Some(VALUE), 2);
+    let decision = fixture.verify(&proposal, &certificate).unwrap();
+    assert_eq!(decision.signed_weight(), 5);
+    assert_eq!(decision.certificate().votes.len(), 2);
 }
 
 #[test]

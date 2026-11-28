@@ -152,23 +152,24 @@ impl BlockStatement {
         set: &ValidatorSet,
         proposal: &[u8],
         precommits: &[u8],
-    ) -> Result<ParentPoint> {
+    ) -> Result<(ParentPoint, VerifiedDecision)> {
         use super::{chain::decision_id, wire};
-        VerifiedDecision::verify(
+        let decision = VerifiedDecision::verify(
             &wire::decode_proposal(proposal)?,
             &wire::decode_quorum(precommits)?,
             set,
             self.consensus,
             self.hash,
         )?;
-        Ok(ParentPoint {
+        let point = ParentPoint {
             height: self.consensus.height,
             block_hash: self.hash,
             state_root: self.state_root,
             receipt_batch_commitment: self.receipt_batch_commitment,
             state_version: self.state_version,
             decision_hash: decision_id(&self.consensus, self.hash),
-        })
+        };
+        Ok((point, decision))
     }
 
     fn compute_hash(&self) -> Hash {

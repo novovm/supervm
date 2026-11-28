@@ -138,6 +138,20 @@ impl ProofTarget {
         )?;
         let receipt = verified.receipt();
         let block = verified.block();
+        let decision = verified.decision();
+        let signers = decision
+            .certificate()
+            .votes
+            .iter()
+            .map(|vote| {
+                let member = self
+                    .verifier
+                    .set
+                    .member(&vote.validator_id)
+                    .context("verified precommit signer missing from validator set")?;
+                Ok(json!({"validator_id": hex(&vote.validator_id), "weight": member.weight()}))
+            })
+            .collect::<Result<Vec<_>>>()?;
         Ok((
             *block,
             json!({
@@ -150,6 +164,12 @@ impl ProofTarget {
                 "block_hash": hex(&block.block_hash),
                 "state_root": hex(&block.state_root),
                 "proof_bytes": bytes.len(),
+                "precommit_certificate": {
+                    "round": decision.proposal().round,
+                    "signed_weight": decision.signed_weight(),
+                    "quorum_weight": self.verifier.set.quorum_weight(),
+                    "signers": signers,
+                },
             }),
         ))
     }

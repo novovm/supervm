@@ -31,6 +31,7 @@ use anyhow::{ensure, Result};
 pub struct VerifiedDecision {
     proposal: wire::Proposal,
     certificate: wire::Quorum,
+    signed_weight: u64,
 }
 
 impl VerifiedDecision {
@@ -61,6 +62,7 @@ impl VerifiedDecision {
         );
         Ok(Self {
             proposal: proposal.into_proposal(),
+            signed_weight: certificate.signed_weight(),
             certificate: certificate.into_quorum(),
         })
     }
@@ -71,6 +73,10 @@ impl VerifiedDecision {
 
     pub fn certificate(&self) -> &wire::Quorum {
         &self.certificate
+    }
+
+    pub fn signed_weight(&self) -> u64 {
+        self.signed_weight
     }
 
     pub fn context(&self) -> &wire::Context {
