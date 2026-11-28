@@ -45,6 +45,23 @@ class ColdNetwork(unittest.TestCase):
                 trace = [self.start, locator, other_sequence, self.state]
                 self.assertIsNone(verify(trace, self.args, sources))
 
+    def test_single_source_requires_the_exact_attribution_used_for_sync(self):
+        verify = CHECK["verified_event"]
+        sources = ["a" * 64, "b" * 64]
+        for source, other in (sources, sources[::-1]):
+            matching = dict(self.locator, locator_returned_by=[source])
+            self.assertEqual(verify([self.start, matching, self.state], self.args, [source], sources),
+                             self.state)
+            for attributed in ([other], sources, [source, source], []):
+                with self.subTest(source=source, attributed=attributed):
+                    locator = dict(self.locator, locator_returned_by=attributed)
+                    other_sequence = dict(matching, locator_sequence=8)
+                    trace = [self.start, locator, other_sequence, self.state]
+                    self.assertIsNone(verify(trace, self.args, [source], sources))
+        infrastructure_start = dict(self.start, transport_identity_sha256=sources[1])
+        with self.assertRaisesRegex(ValueError, "reused a bootstrap identity"):
+            verify([infrastructure_start], self.args, sources[:1], sources)
+
     def test_reject_changed_identity_reused_state_or_unbound_route(self):
         for changes in ({"transport_identity_sha256": "4" * 64}, {"downloaded_nodes": 0},
                         {"state_root": "0x" + "0" * 64}, {"locator_sequence": 8},

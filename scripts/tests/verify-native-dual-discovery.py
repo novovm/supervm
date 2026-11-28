@@ -441,6 +441,97 @@ def follow_main(argv):
     print(json.dumps(result))
 
 
+def verify_archive_cache(args):
+    index_bytes = args.archive_index.read_bytes()
+    if hashlib.sha256(index_bytes).hexdigest() != args.archive_index_sha256:
+        raise ValueError("independent archive index SHA-256 mismatch")
+    rows = json.loads(index_bytes, object_pairs_hook=unique_object)["files"]
+    expected = {Path(row["file"]).name: digest(row["expected"]) for row in rows}
+    if len(expected) != len(rows):
+        raise ValueError("duplicate cache filename in the independent archive index")
+    path = str(args.cache.resolve(strict=True))
+    if sys.platform == "win32" and not path.startswith("\\\\?\\"):
+        path = "\\\\?\\UNC\\" + path[2:] if path.startswith("\\\\") else "\\\\?\\" + path
+    actual = {}
+    for candidate in Path(path).rglob("*"):
+        if candidate.suffix not in (".proof", ".node"):
+            continue
+        if not candidate.is_file() or candidate.is_symlink() or candidate.name in actual:
+            raise ValueError("unexpected link, non-file or duplicate cache filename")
+        actual[candidate.name] = hashlib.sha256(candidate.read_bytes()).hexdigest()
+    if actual != expected:
+        raise ValueError("final cache differs from the independent archive index")
+    return actual
+
+
+def verify_cold_source(args):
+    sources = {args.source, args.other_source}
+    if len(sources) != 2 or args.provider in sources or args.chain_id < 1 or args.height < 1:
+        raise ValueError("expected distinct bootstrap and reader identities, a chain and a target height")
+    check_unpinned_provider(args.profile, args.profile_sha256, args.chain_id, sources, args.provider)
+    pid, client, _, _, events = read_follow_trace(args)
+    if client in sources or client == args.provider:
+        raise ValueError("Client identity overlaps an infrastructure identity")
+    locators = {}
+    for row in events:
+        if row["event"] == "verified_locator_accepted" and row.get("peer_transport_sha256") == args.provider:
+            seq, issue, expiry = (row[k] for k in (
+                "locator_sequence", "locator_issued_at_ms", "locator_expires_at_ms",
+            ))
+            observed = row["utc_unix_ms"]
+            if (any(type(value) is not int for value in (seq, issue, expiry)) or seq < 1
+                    or seq in locators or not 0 < issue <= observed < expiry):
+                raise ValueError("reader locator sequence or signed lifetime is invalid")
+            locators[seq] = (observed, expiry, row["locator_returned_by"])
+        if row["event"] == "verified_state" and row["height"] == args.height:
+            state = row
+            break
+    else:
+        raise ValueError("expected certified state was not verified")
+    if (type(state["height"]) is not int or state.get("peer_transport_sha256") != args.provider
+            or state["transport"] != "iroh" or state.get("native_peer_address") is not None
+            or state["block_hash"] != "0x" + args.block_hash
+            or state["state_root"] != "0x" + args.state_root):
+        raise ValueError("first target state does not match the expected reader, block and state root")
+    seq = state["locator_sequence"]
+    used = locators.get(seq) if type(seq) is int else None
+    if (used is None or used[2] != [args.source]
+            or not used[0] <= state["utc_unix_ms"] < used[1]):
+        raise ValueError("first target state did not use a live locator returned only by the specified source")
+
+    actual = verify_archive_cache(args)
+    headers = sorted(name for name in actual if name.endswith(".proof"))
+    nodes = sum(name.endswith(".node") for name in actual)
+    if len(headers) != args.height or any(name != f"{height:020}.proof" for height, name in enumerate(headers, 1)):
+        raise ValueError("archive cache lacks the complete contiguous chain from genesis")
+    if (type(state["verified_nodes"]) is not int or type(state["downloaded_nodes"]) is not int
+            or nodes < 1 or state["verified_nodes"] != nodes or state["downloaded_nodes"] != nodes
+            or "0x" + args.state_root + ".node" not in actual):
+        raise ValueError("full state download or archived state root differs")
+    return {
+        "checks_passed": True, "follow_pid": pid, "transport_identity_sha256": client,
+        "source": args.source, "locator_sequence": seq, "target_height": args.height,
+        "verified_headers": len(headers), "verified_state_nodes": nodes,
+    }
+
+
+def cold_source_main(argv):
+    parser = argparse.ArgumentParser(description="Verify cold synchronization through one attributed bootstrap")
+    for name in ("events", "start", "end", "profile", "archive-index", "cache"):
+        parser.add_argument("--" + name, type=Path, required=True)
+    for name in ("events-sha256", "client-sha256", "profile-sha256", "archive-index-sha256",
+                 "source", "other-source", "provider", "block-hash", "state-root"):
+        parser.add_argument("--" + name, type=digest, required=True)
+    for name in ("chain-id", "height"):
+        parser.add_argument("--" + name, type=int, required=True)
+    args = parser.parse_args(argv)
+    try:
+        result = verify_cold_source(args)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        parser.exit(1, f"{exc}\n")
+    print(json.dumps(result))
+
+
 def verify_read_transfer(args):
     sources = {args.seed_a, args.seed_b}
     readers = {args.primary_reader, args.standby_reader}
@@ -489,27 +580,10 @@ def verify_read_transfer(args):
                for row in locators):
         raise ValueError("verified state has no live authenticated standby locator")
 
-    index_bytes = args.archive_index.read_bytes()
-    if hashlib.sha256(index_bytes).hexdigest() != args.archive_index_sha256:
-        raise ValueError("independent archive index SHA-256 mismatch")
-    rows = json.loads(index_bytes, object_pairs_hook=unique_object)["files"]
-    expected = {Path(row["file"]).name: digest(row["expected"]) for row in rows}
     before = boundary["files"]
-    if (len(expected) != len(rows) or not 0 < len(before) < len(expected)
-            or any(expected.get(name) != pin for name, pin in before.items())):
+    actual = verify_archive_cache(args)
+    if not 0 < len(before) < len(actual) or any(actual.get(name) != pin for name, pin in before.items()):
         raise ValueError("invalid, empty or already complete partial cache")
-    path = str(args.cache.resolve(strict=True))
-    if sys.platform == "win32" and not path.startswith("\\\\?\\"):
-        path = "\\\\?\\UNC\\" + path[2:] if path.startswith("\\\\") else "\\\\?\\" + path
-    actual = {}
-    for candidate in Path(path).rglob("*"):
-        if candidate.suffix not in (".proof", ".node"):
-            continue
-        if candidate.is_symlink() or candidate.name in actual:
-            raise ValueError("unexpected link or duplicate cache filename")
-        actual[candidate.name] = hashlib.sha256(candidate.read_bytes()).hexdigest()
-    if actual != expected:
-        raise ValueError("final cache differs from the independent archive index")
     missing = actual.keys() - before.keys()
     nodes = sum(name.endswith(".node") for name in actual)
     if type(state["verified_nodes"]) is not int or nodes < 1 or state["verified_nodes"] != nodes:
@@ -546,11 +620,13 @@ def main():
         return direct_main(sys.argv[2:])
     if sys.argv[1:2] == ["follow"]:
         return follow_main(sys.argv[2:])
+    if sys.argv[1:2] == ["cold-source"]:
+        return cold_source_main(sys.argv[2:])
     if sys.argv[1:2] == ["read-transfer"]:
         return read_transfer_main(sys.argv[2:])
     parser = argparse.ArgumentParser(
         description=__doc__,
-        epilog="Use 'direct --help', 'follow --help' or 'read-transfer --help' for other evidence.",
+        epilog="Use 'direct --help', 'follow --help', 'cold-source --help' or 'read-transfer --help' for other evidence.",
     )
     parser.add_argument("--first", type=Path, required=True)
     parser.add_argument("--first-sha256", type=digest, required=True)
@@ -867,7 +943,7 @@ class FollowFailoverTests(TestCase):
                   peer_transport_sha256=self.provider, verified_nodes=19, downloaded_nodes=12),
         ]
 
-    def verify_trace(self, events, issuer_ahead_ms=0, **end_fields):
+    def verify_trace(self, events, issuer_ahead_ms=0, cold_source=False, **end_fields):
         profile = {
             "chain_id": 7251564206, "relays": ["https://approved.invalid/"],
             "lookup_transport_keys": [],
@@ -891,7 +967,7 @@ class FollowFailoverTests(TestCase):
                 "pid": 234, "utc": "1970-01-01T00:00:04Z", "exit": 1,
                 "supervisor_stopped": True, **end_fields,
             }))
-            return verify_follow(argparse.Namespace(
+            args = argparse.Namespace(
                 start=root / "start.json", end=root / "end.json", chain_id=profile["chain_id"],
                 profile=root / "profile.json", profile_sha256=profile_pin,
                 events=root / "stdout.jsonl", events_sha256=hashlib.sha256(raw).hexdigest(),
@@ -899,7 +975,23 @@ class FollowFailoverTests(TestCase):
                 issuer_ahead_ms=issuer_ahead_ms,
                 departed=self.departed, surviving=self.surviving, provider=self.provider,
                 height=42, block_hash="a" * 64, state_root="b" * 64,
-            ))
+            )
+            if not cold_source:
+                return verify_follow(args)
+            args.source, args.other_source = self.surviving, self.departed
+            args.height = 2
+            args.cache = root / "cache"
+            args.cache.mkdir()
+            args.archive_index = root / "index.json"
+            files = []
+            for name in ["00000000000000000001.proof", "00000000000000000002.proof", "0x" + "b" * 64 + ".node"]:
+                content = name.encode()
+                (args.cache / name).write_bytes(content)
+                files.append({"file": name, "expected": hashlib.sha256(content).hexdigest()})
+            index_bytes = json.dumps({"files": files}).encode()
+            args.archive_index.write_bytes(index_bytes)
+            args.archive_index_sha256 = hashlib.sha256(index_bytes).hexdigest()
+            return verify_cold_source(args)
 
     def test_fresh_lease_and_state_are_linked_in_one_cold_client(self):
         result = self.verify_trace(self.trace())
@@ -944,6 +1036,30 @@ class FollowFailoverTests(TestCase):
         self.assertTrue(result["target_used_fresh_survivor_locator"])
         with self.assertRaisesRegex(ValueError, "fresh surviving"):
             self.verify_trace(self.trace(), issuer_ahead_ms=100)
+
+    def test_cold_source_matches_the_used_locator_and_full_archive(self):
+        start, _, locator, state = self.trace()
+        state.update(height=2, verified_nodes=1, downloaded_nodes=1)
+        result = self.verify_trace([start, locator, state], cold_source=True)
+        self.assertEqual(result["source"], self.surviving)
+        self.assertEqual(result["locator_sequence"], locator["locator_sequence"])
+        self.assertEqual((result["verified_headers"], result["verified_state_nodes"]), (2, 1))
+
+    def test_cold_source_rejects_wrong_author_at_first_verified_state(self):
+        start, dual, locator, state = self.trace()
+        state.update(height=2, verified_nodes=1, downloaded_nodes=1)
+        first_state = dict(state, utc_unix_ms=2300, locator_sequence=dual["locator_sequence"])
+        with self.assertRaisesRegex(ValueError, "live locator returned only"):
+            self.verify_trace([start, dual, first_state, locator, state], cold_source=True)
+        expired = dict(locator, locator_expires_at_ms=state["utc_unix_ms"])
+        with self.assertRaisesRegex(ValueError, "live locator returned only"):
+            self.verify_trace([start, expired, state], cold_source=True)
+
+    def test_cold_source_rejects_partially_downloaded_state(self):
+        start, _, locator, state = self.trace()
+        state.update(height=2, verified_nodes=1, downloaded_nodes=0)
+        with self.assertRaisesRegex(ValueError, "full state download"):
+            self.verify_trace([start, locator, state], cold_source=True)
 
 
 class DirectDiscoveryTests(TestCase):
