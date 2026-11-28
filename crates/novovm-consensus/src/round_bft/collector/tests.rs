@@ -436,6 +436,36 @@ fn far_round_witness_admission_is_atomic_and_keeps_ordinary_slots() {
 }
 
 #[test]
+fn recovery_witness_within_vote_window_advances_without_overwriting_a_retained_vote() {
+    let f = Fixture::new(&[1; 4]);
+    let mut collector = f.collector();
+    let known = f.vote(0, 8, Phase::Prevote, Some(A));
+    let conflicting = f
+        .vote(0, 8, Phase::Prevote, Some(B))
+        .verify(&f.set)
+        .unwrap();
+    let second = f.vote(1, 8, Phase::Precommit, None).verify(&f.set).unwrap();
+    collector.insert(&known).unwrap();
+    assert!(collector
+        .admit_verified_far_round_witness(&[conflicting, second.clone()])
+        .is_err());
+    assert!(collector.catch_up().is_none());
+    assert_eq!(collector.vote_count(), 1);
+
+    collector
+        .admit_verified_far_round_witness(&[known.verify(&f.set).unwrap(), second])
+        .unwrap();
+    let evidence = collector.catch_up().unwrap();
+    assert_eq!(evidence.round(), 8);
+    assert_eq!(evidence.signed_weight(), 2);
+    assert_eq!(collector.current_round(), 0);
+    collector.advance_round_and_retire(8, 8).unwrap();
+    assert_eq!(collector.vote_count(), 2);
+    assert_eq!(collector.phase_weight(8, Phase::Prevote), 1);
+    assert_eq!(collector.phase_weight(8, Phase::Precommit), 1);
+}
+
+#[test]
 fn resident_round_split_requires_admissible_exact_round_evidence() {
     let f = Fixture::new(&[1; 4]);
     let collector_at = |round| {

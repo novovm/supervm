@@ -394,8 +394,8 @@ impl VoteCollector {
         self.catch_up.clone()
     }
 
-    /// Admit a complete far-round witness into the existing pinned slot. Do
-    /// not retain individual far votes or relax ordinary vote admission.
+    /// Admit a complete recovery witness for a higher round into the existing
+    /// pinned slot. Individual votes still use the ordinary future window.
     pub fn admit_far_round_witness(&mut self, votes: &[Vote]) -> Result<()> {
         self.admit_far_round_witness_with(votes.iter().map(|vote| (vote, None)))
     }
@@ -457,8 +457,8 @@ impl VoteCollector {
         let first = votes.next().context("empty catch-up witness")?;
         let round = first.0.round;
         ensure!(
-            round.saturating_sub(self.current_round) > self.limits.max_future_round_span,
-            "catch-up witness is not outside the ordinary window"
+            round > self.current_round,
+            "catch-up witness does not advance the current round"
         );
         ensure!(
             self.catch_up
@@ -471,6 +471,12 @@ impl VoteCollector {
             ensure!(
                 vote.context == self.context && vote.round == round,
                 "catch-up witness mixes contexts or rounds"
+            );
+            ensure!(
+                self.future_tips
+                    .get(&Self::tip_key(vote))
+                    .is_none_or(|tip| tip.round != round || tip.value == vote.value),
+                "catch-up witness conflicts with a retained vote"
             );
             ensure!(
                 unique.insert(vote.validator_id, (vote, verified)).is_none(),

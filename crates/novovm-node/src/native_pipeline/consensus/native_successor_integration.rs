@@ -145,11 +145,21 @@ impl NativeFixture {
 #[test]
 #[ignore = "real AOEM; native sockets and isolated stores, not cross-machine finality"]
 fn native_far_round_request_catches_up_and_reopens_existing_store() -> Result<()> {
+    native_round_request_reopens_existing_store(294)
+}
+
+#[test]
+#[ignore = "real AOEM; native sockets and isolated stores, not cross-machine finality"]
+fn native_near_round_request_catches_up_and_reopens_existing_store() -> Result<()> {
+    native_round_request_reopens_existing_store(568)
+}
+
+fn native_round_request_reopens_existing_store(lagged_round: u64) -> Result<()> {
     use crate::native_pipeline::consensus::wire::Phase;
     use novovm_consensus::round_bft::test_vectors::sign_vote;
 
     let scratch = std::env::temp_dir().join(format!(
-        "novovm-far-round-{}-{}",
+        "novovm-round-recovery-{}-{}",
         std::process::id(),
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
     ));
@@ -167,7 +177,7 @@ fn native_far_round_request_catches_up_and_reopens_existing_store() -> Result<()
     let lagged = 1;
     // Only establish test preconditions here, with ordinary signed, in-window
     // votes and the actual AOEM ACK path. No far witness or request is injected.
-    for (node, goal) in [(responder, 580), (lagged, 294)] {
+    for (node, goal) in [(responder, 580), (lagged, lagged_round)] {
         while f.nodes[node].progress.round() < goal {
             let next = (f.nodes[node].progress.round() + 32).min(goal);
             for signer in [2, 3] {
